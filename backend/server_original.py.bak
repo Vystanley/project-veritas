@@ -1,0 +1,1136 @@
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
+import logging
+import json
+import uuid
+import shutil
+import string
+import random
+import tempfile
+import asyncio
+import base64
+import subprocess
+from pathlib import Path
+from pydantic import BaseModel, Field, EmailStr
+from typing import List, Optional
+from datetime import datetime, timezone, timedelta
+import re
+import jwt
+import bcrypt
+from duckduckgo_search import DDGS
+
+from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout, CheckoutSessionResponse, CheckoutStatusResponse, CheckoutSessionRequest
+)
+import speech_recognition as sr
+from pydub import AudioSegment
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+mongo_url = os.environ['MONGO_URL']
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ['DB_NAME']]
+
+JWT_SECRET = os.environ['JWT_SECRET']
+EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
+STRIPE_API_KEY = os.environ['STRIPE_API_KEY']
+JWT_ALGORITHM = "HS256"
+YT_DLP_PATH = shutil.which("yt-dlp") or "/root/.venv/bin/yt-dlp"
+FFMPEG_PATH = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
+FFPROBE_PATH = shutil.which("ffprobe") or "/usr/bin/ffprobe"
+
+def ensure_ffmpeg():
+    """Check and install ffmpeg if missing."""
+    if not shutil.which("ffmpeg"):
+        logger.warning("ffmpeg not found, attempting install...")
+        import subprocess
+        subprocess.run(["apt-get", "install", "-y", "ffmpeg"], capture_output=True, timeout=120)
+        global FFMPEG_PATH, FFPROBE_PATH
+        FFMPEG_PATH = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
+        FFPROBE_PATH = shutil.which("ffprobe") or "/usr/bin/ffprobe"
+
+FREE_SCANS_PER_WEEK = 2
+PREMIUM_FUP_MONTHLY_CAP = 175
+REFERRAL_BONUS_SCANS = 3
+
+PLANS = {
+    "premium_monthly": {"amount": 13.99, "currency": "usd", "label": "Premium Monthly", "days": 30},
+    "premium_annual": {"amount": 119.00, "currency": "usd", "label": "Premium Annual", "days": 365},
+}
+
+# ============ ASYNC JOB QUEUE ============
+
+_fact_check_jobs = {}
+
+class FactCheckJob:
+    def __init__(self, job_id: str, video_url: str, user_id: str):
+        self.job_id = job_id
+        self.video_url = video_url
+        self.user_id = user_id
+        self.status = "pending"       # pending → processing → completed / failed
+        self.progress = 0             # 0-100
+        self.progress_message = "Queued for processing..."
+        self.result = None            # Full fact-check result when done
+        self.error = None             # Error message if failed
+        self.created_at = datetime.now(timezone.utc)
+
+def cleanup_old_jobs():
+    """Remove jobs older than 1 hour."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+    expired = [jid for jid, job in _fact_check_jobs.items() if job.created_at < cutoff]
+    for jid in expired:
+        del _fact_check_jobs[jid]
+
+app = FastAPI()
+api_router = APIRouter(prefix="/api")
+security = HTTPBearer()
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    messages = []
+    for e in errors:
+        field = e.get("loc", [])[-1] if e.get("loc") else "field"
+        msg = e.get("msg", "Invalid value")
+        if "email" in str(field).lower():
+            messages.append("Please enter a valid email address")
+        elif "password" in str(field).lower():
+            messages.append(f"Invalid password: {msg}")
+        else:
+            messages.append(f"{field}: {msg}")
+    detail = ". ".join(dict.fromkeys(messages))
+    return JSONResponse(status_code=400, content={"detail": detail})
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch ALL unhandled exceptions and return JSON — never raw text."""
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal error occurred. Please try again.", "status": "error"}
+    )
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Ensure HTTPExceptions also return clean JSON."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": str(exc.detail)}
+    )
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# ============ MODELS ============
+
+class UserRegister(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    consent_accepted: bool = False
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserResponse(BaseModel):
+    id: str
+    name: str
+    email: str
+    email_verified: bool = False
+
+class AuthResponse(BaseModel):
+    token: str
+    user: UserResponse
+    verification_code: Optional[str] = None  # Only in mock mode
+
+class VerifyEmailRequest(BaseModel):
+    code: str
+
+class ResendCodeRequest(BaseModel):
+    email: str
+
+class FactCheckRequest(BaseModel):
+    video_url: str
+
+class ClaimResult(BaseModel):
+    claim: str
+    verdict: str
+    explanation: str
+    sources: List[str] = []
+
+class DeepfakeResult(BaseModel):
+    is_deepfake: bool
+    confidence: int
+    risk_level: str  # "low", "medium", "high"
+    analysis: str
+    indicators: List[str] = []
+
+class FactCheckResponse(BaseModel):
+    id: str
+    overall_verdict: str
+    confidence_score: int
+    summary: str
+    transcript: str
+    claims: List[ClaimResult]
+    sources: List[dict] = []
+    deepfake: DeepfakeResult
+    video_url: str
+    created_at: str
+
+class SubscriptionStatus(BaseModel):
+    plan: str
+    scans_used: int
+    scans_remaining: int
+    is_premium: bool
+    expires_at: Optional[str] = None
+    period_resets_at: str
+    bonus_scans: int = 0
+
+class CheckoutRequest(BaseModel):
+    plan: str
+    origin_url: str
+
+class ReferralApplyRequest(BaseModel):
+    referral_code: str
+
+class PushTokenRequest(BaseModel):
+    push_token: str
+
+# ============ AUTH HELPERS ============
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+def create_token(user_id: str) -> str:
+    payload = {"sub": user_id, "exp": datetime.now(timezone.utc) + timedelta(days=30), "iat": datetime.now(timezone.utc)}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        user = await db.users.find_one({"id": user_id}, {"_id": 0})
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+# ============ REFERRAL HELPERS ============
+
+def generate_referral_code(length=8):
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+
+async def ensure_referral_code(user_id: str) -> str:
+    ref = await db.referrals.find_one({"user_id": user_id}, {"_id": 0})
+    if ref:
+        return ref["code"]
+    for _ in range(10):
+        code = generate_referral_code()
+        if not await db.referrals.find_one({"code": code}):
+            break
+    await db.referrals.insert_one({"user_id": user_id, "code": code, "referred_users": [], "bonus_scans_earned": 0, "created_at": datetime.now(timezone.utc).isoformat()})
+    return code
+
+# ============ SUBSCRIPTION HELPERS ============
+
+def get_week_start():
+    now = datetime.now(timezone.utc)
+    return (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+
+def get_month_start():
+    return datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+async def get_subscription(user_id: str) -> dict:
+    sub = await db.subscriptions.find_one({"user_id": user_id}, {"_id": 0})
+    if not sub:
+        sub = {"user_id": user_id, "plan": "free", "started_at": datetime.now(timezone.utc).isoformat(), "expires_at": None, "bonus_scans": 0}
+        await db.subscriptions.insert_one(sub)
+        sub.pop("_id", None)
+    else:
+        defaults = {"plan": "free", "started_at": datetime.now(timezone.utc).isoformat(), "expires_at": None, "bonus_scans": 0}
+        needs_update = {k: v for k, v in defaults.items() if k not in sub}
+        if needs_update:
+            sub.update(needs_update)
+            await db.subscriptions.update_one({"user_id": user_id}, {"$set": needs_update})
+    return sub
+
+async def count_scans_this_week(user_id: str) -> int:
+    return await db.scan_logs.count_documents({"user_id": user_id, "created_at": {"$gte": get_week_start().isoformat()}})
+
+async def count_scans_this_month(user_id: str) -> int:
+    return await db.scan_logs.count_documents({"user_id": user_id, "created_at": {"$gte": get_month_start().isoformat()}})
+
+async def check_scan_limit(user_id: str):
+    sub = await get_subscription(user_id)
+    is_premium = sub["plan"] in ("premium_monthly", "premium_annual")
+    if is_premium and sub.get("expires_at"):
+        if datetime.now(timezone.utc) > datetime.fromisoformat(sub["expires_at"]):
+            await db.subscriptions.update_one({"user_id": user_id}, {"$set": {"plan": "free", "expires_at": None}})
+            is_premium = False
+    if is_premium:
+        if await count_scans_this_month(user_id) >= PREMIUM_FUP_MONTHLY_CAP:
+            raise HTTPException(status_code=429, detail="Monthly scan limit reached. Resets next month.")
+    else:
+        bonus = sub.get("bonus_scans", 0)
+        if await count_scans_this_week(user_id) >= FREE_SCANS_PER_WEEK + bonus:
+            raise HTTPException(status_code=429, detail=f"You've used all free scans this week. Upgrade to Premium for unlimited scans!")
+
+async def log_scan(user_id: str, video_url: str, check_id: str):
+    await db.scan_logs.insert_one({"user_id": user_id, "video_url": video_url, "check_id": check_id, "created_at": datetime.now(timezone.utc).isoformat()})
+
+# ============ AUTH ROUTES ============
+
+VALID_EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+ACCOUNT_REUSE_COOLDOWN_DAYS = 30
+VERIFICATION_CODE_EXPIRY_MINUTES = 10
+EMAIL_MOCK_MODE = True  # Set to False when Resend is configured
+
+def generate_verification_code() -> str:
+    return str(random.randint(100000, 999999))
+
+@api_router.post("/auth/register", response_model=AuthResponse)
+async def register(data: UserRegister):
+    if not data.consent_accepted:
+        raise HTTPException(status_code=400, detail="You must accept the Terms & Conditions to create an account")
+    if not VALID_EMAIL_RE.match(data.email):
+        raise HTTPException(status_code=400, detail="Please enter a valid email address")
+    deleted = await db.deleted_accounts.find_one({"email": data.email}, {"_id": 0})
+    if deleted:
+        deleted_at = datetime.fromisoformat(deleted["deleted_at"])
+        days_since = (datetime.now(timezone.utc) - deleted_at).days
+        if days_since < ACCOUNT_REUSE_COOLDOWN_DAYS:
+            remaining = ACCOUNT_REUSE_COOLDOWN_DAYS - days_since
+            raise HTTPException(status_code=400, detail=f"This email was recently used on a deleted account. You can re-register in {remaining} day(s).")
+    if await db.users.find_one({"email": data.email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user_id = str(uuid.uuid4())
+    await db.users.insert_one({
+        "id": user_id, "name": data.name, "email": data.email,
+        "password_hash": hash_password(data.password),
+        "email_verified": False,
+        "consent_accepted": True, "consent_accepted_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    await ensure_referral_code(user_id)
+    # Generate verification code
+    code = generate_verification_code()
+    await db.verification_codes.delete_many({"user_id": user_id})
+    await db.verification_codes.insert_one({
+        "user_id": user_id, "email": data.email, "code": code,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=VERIFICATION_CODE_EXPIRY_MINUTES)).isoformat()
+    })
+    logger.info(f"Verification code for {data.email}: {code} (mock mode: {EMAIL_MOCK_MODE})")
+    # In mock mode, return the code in the response
+    return AuthResponse(
+        token=create_token(user_id),
+        user=UserResponse(id=user_id, name=data.name, email=data.email, email_verified=False),
+        verification_code=code if EMAIL_MOCK_MODE else None
+    )
+
+@api_router.post("/auth/verify-email")
+async def verify_email(data: VerifyEmailRequest, user=Depends(get_current_user)):
+    record = await db.verification_codes.find_one({"user_id": user["id"]}, {"_id": 0})
+    if not record:
+        raise HTTPException(status_code=400, detail="No verification code found. Please request a new one.")
+    expires = datetime.fromisoformat(record["expires_at"])
+    if datetime.now(timezone.utc) > expires:
+        raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
+    if record["code"] != data.code:
+        raise HTTPException(status_code=400, detail="Invalid verification code. Please try again.")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"email_verified": True}})
+    await db.verification_codes.delete_many({"user_id": user["id"]})
+    return {"success": True, "message": "Email verified successfully!"}
+
+@api_router.post("/auth/resend-code")
+async def resend_verification_code(user=Depends(get_current_user)):
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if u and u.get("email_verified"):
+        raise HTTPException(status_code=400, detail="Email is already verified")
+    code = generate_verification_code()
+    await db.verification_codes.delete_many({"user_id": user["id"]})
+    await db.verification_codes.insert_one({
+        "user_id": user["id"], "email": user["email"], "code": code,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=VERIFICATION_CODE_EXPIRY_MINUTES)).isoformat()
+    })
+    logger.info(f"Resent verification code for {user['email']}: {code}")
+    mock_code = code if EMAIL_MOCK_MODE else None
+    return {"success": True, "message": "Verification code sent!", "verification_code": mock_code}
+
+@api_router.post("/auth/login")
+async def login(data: UserLogin):
+    user = await db.users.find_one({"email": data.email}, {"_id": 0})
+    if not user or not verify_password(data.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    verified = user.get("email_verified", False)
+    
+    base_response = {
+        "token": create_token(user["id"]),
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"],
+            "email_verified": verified
+        }
+    }
+    
+    # If not verified, generate a new code for them
+    if not verified:
+        code = generate_verification_code()
+        await db.verification_codes.delete_many({"user_id": user["id"]})
+        await db.verification_codes.insert_one({
+            "user_id": user["id"], "email": user["email"], "code": code,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=VERIFICATION_CODE_EXPIRY_MINUTES)).isoformat()
+        })
+        if EMAIL_MOCK_MODE:
+            base_response["verification_code"] = code
+    
+    return base_response
+
+@api_router.get("/auth/me", response_model=UserResponse)
+async def get_me(user=Depends(get_current_user)):
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    verified = u.get("email_verified", False) if u else False
+    return UserResponse(id=user["id"], name=user["name"], email=user["email"], email_verified=verified)
+
+# ============ SUBSCRIPTION ROUTES ============
+
+@api_router.get("/subscription/status", response_model=SubscriptionStatus)
+async def subscription_status(user=Depends(get_current_user)):
+    sub = await get_subscription(user["id"])
+    is_premium = sub["plan"] in ("premium_monthly", "premium_annual")
+    if is_premium and sub.get("expires_at"):
+        if datetime.now(timezone.utc) > datetime.fromisoformat(sub["expires_at"]):
+            await db.subscriptions.update_one({"user_id": user["id"]}, {"$set": {"plan": "free", "expires_at": None}})
+            is_premium = False
+            sub["plan"] = "free"
+    bonus = sub.get("bonus_scans", 0)
+    if is_premium:
+        scans_used = await count_scans_this_month(user["id"])
+        scans_remaining = max(0, PREMIUM_FUP_MONTHLY_CAP - scans_used)
+        next_period = (get_month_start().replace(day=28) + timedelta(days=4)).replace(day=1)
+    else:
+        scans_used = await count_scans_this_week(user["id"])
+        scans_remaining = max(0, FREE_SCANS_PER_WEEK + bonus - scans_used)
+        next_period = get_week_start() + timedelta(days=7)
+    return SubscriptionStatus(plan=sub["plan"], scans_used=scans_used, scans_remaining=scans_remaining, is_premium=is_premium, expires_at=sub.get("expires_at"), period_resets_at=next_period.isoformat(), bonus_scans=bonus)
+
+@api_router.post("/subscription/cancel")
+async def cancel_subscription(user=Depends(get_current_user)):
+    await db.subscriptions.update_one({"user_id": user["id"]}, {"$set": {"plan": "free", "expires_at": None}})
+    return {"success": True, "plan": "free"}
+
+# ============ STRIPE PAYMENT ROUTES ============
+
+@api_router.post("/payments/checkout")
+async def create_checkout(data: CheckoutRequest, request: Request, user=Depends(get_current_user)):
+    if data.plan not in PLANS:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+    plan = PLANS[data.plan]
+    origin = data.origin_url.rstrip("/")
+    host_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    session = await stripe_checkout.create_checkout_session(CheckoutSessionRequest(
+        amount=float(plan["amount"]), currency=plan["currency"],
+        success_url=f"{origin}/payment-success?session_id={{CHECKOUT_SESSION_ID}}", cancel_url=f"{origin}/home",
+        metadata={"user_id": user["id"], "plan": data.plan}
+    ))
+    await db.payment_transactions.insert_one({"id": str(uuid.uuid4()), "session_id": session.session_id, "user_id": user["id"], "plan": data.plan, "amount": float(plan["amount"]), "currency": plan["currency"], "payment_status": "pending", "status": "initiated", "created_at": datetime.now(timezone.utc).isoformat()})
+    return {"url": session.url, "session_id": session.session_id}
+
+@api_router.get("/payments/status/{session_id}")
+async def get_payment_status(session_id: str, request: Request, user=Depends(get_current_user)):
+    host_url = str(request.base_url).rstrip("/")
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{host_url}/api/webhook/stripe")
+    try:
+        status = await stripe_checkout.get_checkout_status(session_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not check payment status")
+    tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if tx and tx.get("payment_status") != "paid" and status.payment_status == "paid":
+        plan_info = PLANS.get(tx["plan"], PLANS["premium_monthly"])
+        now = datetime.now(timezone.utc)
+        await db.subscriptions.update_one({"user_id": user["id"]}, {"$set": {"plan": tx["plan"], "started_at": now.isoformat(), "expires_at": (now + timedelta(days=plan_info["days"])).isoformat()}}, upsert=True)
+        await db.payment_transactions.update_one({"session_id": session_id}, {"$set": {"payment_status": "paid", "status": "complete", "completed_at": now.isoformat()}})
+    return {"status": status.status, "payment_status": status.payment_status, "amount_total": status.amount_total, "currency": status.currency}
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+    host_url = str(request.base_url).rstrip("/")
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{host_url}/api/webhook/stripe")
+    try:
+        event = await stripe_checkout.handle_webhook(body, sig)
+        if event.payment_status == "paid":
+            tx = await db.payment_transactions.find_one({"session_id": event.session_id}, {"_id": 0})
+            if tx and tx.get("payment_status") != "paid":
+                plan_info = PLANS.get(tx["plan"], PLANS["premium_monthly"])
+                now = datetime.now(timezone.utc)
+                await db.subscriptions.update_one({"user_id": tx["user_id"]}, {"$set": {"plan": tx["plan"], "started_at": now.isoformat(), "expires_at": (now + timedelta(days=plan_info["days"])).isoformat()}}, upsert=True)
+                await db.payment_transactions.update_one({"session_id": event.session_id}, {"$set": {"payment_status": "paid", "status": "complete", "completed_at": now.isoformat()}})
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+    return {"received": True}
+
+# ============ REFERRAL ROUTES ============
+
+@api_router.get("/referral/info")
+async def referral_info(user=Depends(get_current_user)):
+    code = await ensure_referral_code(user["id"])
+    ref = await db.referrals.find_one({"user_id": user["id"]}, {"_id": 0})
+    return {"code": code, "referred_count": len(ref.get("referred_users", [])), "bonus_scans_earned": ref.get("bonus_scans_earned", 0)}
+
+@api_router.post("/referral/apply")
+async def apply_referral(data: ReferralApplyRequest, user=Depends(get_current_user)):
+    code = data.referral_code.strip().upper()
+    ref = await db.referrals.find_one({"code": code}, {"_id": 0})
+    if not ref:
+        raise HTTPException(status_code=404, detail="Invalid referral code")
+    if ref["user_id"] == user["id"]:
+        raise HTTPException(status_code=400, detail="You cannot use your own referral code")
+    if await db.referral_log.find_one({"referred_user_id": user["id"]}):
+        raise HTTPException(status_code=400, detail="You have already used a referral code")
+    await get_subscription(ref["user_id"])
+    await get_subscription(user["id"])
+    await db.referrals.update_one({"code": code}, {"$push": {"referred_users": user["id"]}, "$inc": {"bonus_scans_earned": REFERRAL_BONUS_SCANS}})
+    await db.subscriptions.update_one({"user_id": ref["user_id"]}, {"$inc": {"bonus_scans": REFERRAL_BONUS_SCANS}})
+    await db.subscriptions.update_one({"user_id": user["id"]}, {"$inc": {"bonus_scans": REFERRAL_BONUS_SCANS}})
+    await db.referral_log.insert_one({"referrer_user_id": ref["user_id"], "referred_user_id": user["id"], "code": code, "created_at": datetime.now(timezone.utc).isoformat()})
+    return {"success": True, "bonus_scans": REFERRAL_BONUS_SCANS, "message": f"You and your friend each received {REFERRAL_BONUS_SCANS} bonus scans!"}
+
+# ============ NOTIFICATIONS ============
+
+@api_router.post("/notifications/register")
+async def register_push_token(data: PushTokenRequest, user=Depends(get_current_user)):
+    await db.push_tokens.update_one({"user_id": user["id"]}, {"$set": {"push_token": data.push_token, "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    return {"success": True}
+
+@api_router.get("/notifications/schedule")
+async def get_notification_schedule(user=Depends(get_current_user)):
+    next_reset = get_week_start() + timedelta(days=7)
+    return {"next_reset": next_reset.isoformat(), "next_reset_day": next_reset.strftime("%A, %B %d")}
+
+# ============ VIDEO PROCESSING PIPELINE ============
+
+async def download_video(video_url: str, temp_dir: str) -> Optional[str]:
+    """Download video as MP4 using yt-dlp with retry. Returns path or None if download fails."""
+    ensure_ffmpeg()
+    video_path = os.path.join(temp_dir, "video.mp4")
+    
+    # Try up to 2 times with different strategies
+    strategies = [
+        # Strategy 1: impersonate chrome (works for TikTok, some others)
+        ["--impersonate", "chrome", "-f", "best[ext=mp4]/best", "--merge-output-format", "mp4"],
+        # Strategy 2: no impersonation, different format selection
+        ["-f", "best"],
+    ]
+    
+    for i, extra_args in enumerate(strategies):
+        if i > 0:
+            # Clean up previous attempt
+            for f in os.listdir(temp_dir):
+                fp = os.path.join(temp_dir, f)
+                if os.path.isfile(fp):
+                    os.remove(fp)
+        
+        cmd = [
+            YT_DLP_PATH,
+            "--ffmpeg-location", os.path.dirname(FFMPEG_PATH),
+            "--js-runtimes", "node",
+            "--remote-components", "ejs:github",
+            "--no-playlist",
+            "--max-filesize", "50m",
+            "--socket-timeout", "30",
+            *extra_args,
+            "-o", video_path,
+            video_url
+        ]
+        process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            process.kill()
+            logger.warning(f"Video download timed out (strategy {i+1})")
+            continue
+
+        if process.returncode != 0:
+            error_msg = stderr.decode() if stderr else "Unknown error"
+            logger.warning(f"yt-dlp strategy {i+1} failed: {error_msg[:200]}")
+            continue
+
+        # Find the actual output file
+        if not os.path.exists(video_path):
+            for f in os.listdir(temp_dir):
+                if f.startswith("video") and any(f.endswith(ext) for ext in [".mp4", ".webm", ".mkv"]):
+                    video_path = os.path.join(temp_dir, f)
+                    break
+        if not os.path.exists(video_path):
+            for f in os.listdir(temp_dir):
+                full = os.path.join(temp_dir, f)
+                if os.path.isfile(full) and os.path.getsize(full) > 10000:
+                    video_path = full
+                    break
+
+        if os.path.exists(video_path):
+            logger.info(f"Video downloaded (strategy {i+1}): {video_path} ({os.path.getsize(video_path)} bytes)")
+            return video_path
+    
+    return None
+
+
+async def download_subtitles(video_url: str, temp_dir: str) -> Optional[str]:
+    """Try to download subtitles/captions from the video (YouTube fallback)."""
+    sub_path = os.path.join(temp_dir, "subs")
+    cmd = [
+        YT_DLP_PATH,
+        "--js-runtimes", "node",
+        "--remote-components", "ejs:github",
+        "--impersonate", "chrome",
+        "--write-auto-sub",
+        "--sub-lang", "en",
+        "--skip-download",
+        "--no-playlist",
+        "-o", sub_path,
+        video_url
+    ]
+    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
+    except asyncio.TimeoutError:
+        process.kill()
+        return None
+
+    # Find any .vtt or .srt file
+    for f in os.listdir(temp_dir):
+        if f.endswith(".vtt") or f.endswith(".srt"):
+            vtt_path = os.path.join(temp_dir, f)
+            with open(vtt_path, "r") as fh:
+                content = fh.read()
+            # Parse VTT to plain text
+            lines = []
+            for line in content.split("\n"):
+                line = line.strip()
+                if not line or line.startswith("WEBVTT") or line.startswith("Kind:") or line.startswith("Language:"):
+                    continue
+                if "-->" in line:
+                    continue
+                # Remove VTT tags
+                clean = re.sub(r'<[^>]+>', '', line)
+                clean = clean.replace("&gt;", ">").replace("&lt;", "<").replace("&amp;", "&")
+                if clean.strip():
+                    lines.append(clean.strip())
+            # Deduplicate consecutive lines
+            deduped = []
+            for l in lines:
+                if not deduped or l != deduped[-1]:
+                    deduped.append(l)
+            transcript = " ".join(deduped)
+            if len(transcript) > 10:
+                logger.info(f"Subtitles extracted: {len(transcript)} chars")
+                return transcript
+    return None
+
+async def extract_frames(video_path: str, temp_dir: str, num_frames: int = 5) -> List[str]:
+    """Extract evenly-spaced frames from the video for deepfake analysis."""
+    frames_dir = os.path.join(temp_dir, "frames")
+    os.makedirs(frames_dir, exist_ok=True)
+
+    cmd = [
+        FFMPEG_PATH, "-i", video_path,
+        "-vf", f"fps=1,scale=512:-1",
+        "-frames:v", str(num_frames),
+        "-q:v", "5",
+        os.path.join(frames_dir, "frame_%03d.jpg"),
+        "-y"
+    ]
+    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    await asyncio.wait_for(process.communicate(), timeout=30)
+
+    frames = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith('.jpg')])
+    return frames
+
+async def analyze_deepfake(frames: List[str], video_url: str) -> DeepfakeResult:
+    """Analyze video frames for deepfake indicators using GPT-5.2 vision."""
+    if not frames:
+        return DeepfakeResult(is_deepfake=False, confidence=0, risk_level="low", analysis="No frames available for analysis.", indicators=[])
+
+    try:
+        # Encode frames as base64 for GPT vision
+        image_contents = []
+        for frame_path in frames[:5]:
+            with open(frame_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+                image_contents.append(ImageContent(image_base64=b64))
+
+        system_msg = """You are an expert deepfake detection AI. Analyze video frames for signs of AI-generated or manipulated content.
+
+Look for these indicators:
+- Facial inconsistencies: asymmetry, blurred edges around face, unnatural skin texture
+- Eye/mouth artifacts: irregular blinking, distorted teeth, lip-sync issues
+- Lighting anomalies: inconsistent shadows, unnatural reflections, lighting direction mismatches
+- Background glitches: warping, blending artifacts, inconsistent perspective
+- Hair/ear artifacts: blurred boundaries, unnatural movement patterns
+- Resolution inconsistencies: face sharper/blurrier than background
+- Temporal artifacts: flickering, morphing between frames
+
+RESPOND WITH VALID JSON ONLY:
+{
+    "is_deepfake": true/false,
+    "confidence": <0-100 how confident you are in your assessment>,
+    "risk_level": "low" | "medium" | "high",
+    "analysis": "<2-3 sentence explanation of your findings>",
+    "indicators": ["<list of specific indicators found or notable observations>"]
+}
+
+Be conservative — only flag as high risk if strong indicators are present. Many legitimate videos have minor artifacts from compression."""
+
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"deepfake-{uuid.uuid4()}", system_message=system_msg)
+        chat.with_model("anthropic", "claude-sonnet-4-6")
+
+        user_msg = UserMessage(
+            text=f"Analyze these {len(image_contents)} frames from a social media video for deepfake/AI-generation indicators. Video URL: {video_url}\n\nProvide your deepfake analysis in JSON format only.",
+            file_contents=image_contents
+        )
+
+        response = await chat.send_message(user_msg)
+        response_text = response.strip()
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
+            start = 1
+            end = len(lines) - 1 if lines[-1].strip().startswith("```") else len(lines)
+            response_text = "\n".join(lines[start:end])
+
+        result = json.loads(response_text)
+        return DeepfakeResult(
+            is_deepfake=result.get("is_deepfake", False),
+            confidence=result.get("confidence", 0),
+            risk_level=result.get("risk_level", "low"),
+            analysis=result.get("analysis", ""),
+            indicators=result.get("indicators", [])
+        )
+    except Exception as e:
+        logger.error(f"Deepfake analysis error: {e}")
+        return DeepfakeResult(is_deepfake=False, confidence=0, risk_level="low", analysis="Deepfake analysis could not be completed.", indicators=[])
+
+async def extract_audio(video_path: str, temp_dir: str) -> str:
+    """Extract audio from video using ffmpeg."""
+    audio_path = os.path.join(temp_dir, "audio.mp3")
+    cmd = [FFMPEG_PATH, "-i", video_path, "-vn", "-acodec", "libmp3lame", "-q:a", "2", audio_path, "-y"]
+    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    await asyncio.wait_for(process.communicate(), timeout=60)
+    if not os.path.exists(audio_path) or os.path.getsize(audio_path) < 1000:
+        raise HTTPException(status_code=400, detail="Could not extract audio from video")
+    return audio_path
+
+async def transcribe_audio(audio_path: str, temp_dir: str) -> str:
+    """Transcribe audio using Google Speech Recognition (free, no API key required)."""
+    try:
+        wav_path = os.path.join(temp_dir, "audio_sr.wav")
+        
+        # Convert to WAV format (16kHz mono) for speech recognition
+        cmd = [FFMPEG_PATH, "-i", audio_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path, "-y"]
+        process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        await asyncio.wait_for(process.communicate(), timeout=60)
+        
+        if not os.path.exists(wav_path) or os.path.getsize(wav_path) < 1000:
+            raise Exception("WAV conversion failed")
+        
+        # Get audio duration to handle chunking for longer videos
+        audio = AudioSegment.from_wav(wav_path)
+        duration_ms = len(audio)
+        logger.info(f"Audio duration: {duration_ms/1000:.1f}s")
+        
+        recognizer = sr.Recognizer()
+        recognizer.energy_threshold = 300
+        
+        # For short audio (<= 60s), transcribe all at once
+        # For longer audio, split into chunks
+        chunk_duration_ms = 55000  # ~55 seconds per chunk (Google's limit is ~60s)
+        
+        if duration_ms <= 60000:
+            chunks = [audio]
+        else:
+            chunks = [audio[i:i+chunk_duration_ms] for i in range(0, duration_ms, chunk_duration_ms)]
+        
+        full_transcript = []
+        for i, chunk in enumerate(chunks):
+            chunk_path = os.path.join(temp_dir, f"chunk_{i}.wav")
+            chunk.export(chunk_path, format="wav")
+            
+            with sr.AudioFile(chunk_path) as source:
+                audio_data = recognizer.record(source)
+            
+            try:
+                text = recognizer.recognize_google(audio_data)
+                if text:
+                    full_transcript.append(text)
+                    logger.info(f"Chunk {i+1}/{len(chunks)} transcribed: {len(text)} chars")
+            except sr.UnknownValueError:
+                logger.warning(f"Chunk {i+1}: Could not understand audio")
+            except sr.RequestError as e:
+                logger.warning(f"Chunk {i+1}: Google STT request error: {e}")
+                # Try with a different language hint
+                try:
+                    text = recognizer.recognize_google(audio_data, language="en-US")
+                    if text:
+                        full_transcript.append(text)
+                except Exception:
+                    pass
+        
+        transcript = " ".join(full_transcript)
+        if transcript and len(transcript) > 10:
+            logger.info(f"Full transcript: {len(transcript)} chars")
+            return transcript
+        
+        raise Exception("No speech detected in audio")
+    except Exception as e:
+        logger.error(f"Transcription error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to transcribe audio: {str(e)}")
+
+async def search_web_context(transcript: str) -> str:
+    """Search the web for current information related to the video transcript claims using news + text search."""
+    try:
+        ddgs = DDGS()
+        all_results = []
+
+        # Step 1: Use LLM to extract key search queries from transcript
+        search_queries = await extract_search_queries(transcript)
+        
+        # Step 2: Search each query with news (most reliable for current events)
+        for query in search_queries[:5]:
+            try:
+                news = ddgs.news(query, max_results=3)
+                all_results.extend(news or [])
+            except Exception:
+                pass
+            # Also try text search for each query
+            try:
+                text = ddgs.text(query, max_results=2)
+                all_results.extend(text or [])
+            except Exception:
+                pass
+
+        if not all_results:
+            logger.warning("Web search returned no results for any query")
+            return ""
+
+        # Deduplicate by title
+        seen_titles = set()
+        context_parts = []
+        for r in all_results:
+            title = r.get("title", "")
+            if title in seen_titles:
+                continue
+            seen_titles.add(title)
+            body = r.get("body", "")
+            href = r.get("href", r.get("url", ""))
+            date = r.get("date", "")
+            date_str = f" [{date}]" if date else ""
+            context_parts.append(f"- {title}{date_str}: {body} (Source: {href})")
+
+        web_context = "\n".join(context_parts[:12])
+        logger.info(f"Web search returned {len(context_parts)} unique results for fact-checking context")
+        return web_context
+    except Exception as e:
+        logger.warning(f"Web search failed: {e}")
+        return ""
+
+
+async def extract_search_queries(transcript: str) -> list:
+    """Use LLM to extract 3-5 focused search queries from a video transcript for fact-checking."""
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"search-{uuid.uuid4()}",
+            system_message="You extract search queries from video transcripts. Output ONLY a JSON array of 3-5 short, specific search queries that would help fact-check the claims in the transcript. Focus on people's names, events, titles, specific facts, and recent news. Keep each query under 8 words. Output valid JSON array only, no other text."
+        )
+        chat.with_model("anthropic", "claude-sonnet-4-6")
+        msg = UserMessage(text=f"Extract search queries for fact-checking this transcript:\n\n{transcript[:800]}")
+        response = await chat.send_message(msg)
+        text = response.strip() if isinstance(response, str) else response.text.strip()
+        # Parse JSON array
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        queries = json.loads(text)
+        if isinstance(queries, list):
+            logger.info(f"Extracted search queries: {queries}")
+            return [q for q in queries if isinstance(q, str) and len(q) > 3]
+        return []
+    except Exception as e:
+        logger.warning(f"Failed to extract search queries: {e}")
+        # Fallback: extract key phrases manually
+        words = transcript[:600]
+        phrases = set()
+        # Find capitalized multi-word names
+        for match in re.findall(r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', words):
+            phrases.add(match)
+        # Find common key entity patterns (case-insensitive)
+        for match in re.findall(r'(?:secretary of \w+|president \w+|minister \w+|\w+ navy|\w+ army)', words, re.IGNORECASE):
+            phrases.add(match)
+        return list(phrases)[:5] if phrases else [words[:100]]
+
+async def fact_check_transcript(transcript: str, video_url: str) -> dict:
+    """Analyze transcript with GPT-5.2 for fact-checking, enhanced with real-time web search."""
+    try:
+        # Search the web for current context about the claims
+        web_context = await search_web_context(transcript)
+        
+        today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
+        
+        web_section = ""
+        if web_context:
+            web_section = f"""
+IMPORTANT — REAL-TIME WEB SEARCH RESULTS (retrieved today, {today_str}):
+{web_context}
+
+Use these search results as your PRIMARY source of truth for current events. Your training data may be outdated. If the web results confirm a claim that you might otherwise doubt, trust the web results."""
+
+        system_message = f"""You are Veritas, an expert AI fact-checker. Today's date is {today_str}. Analyze transcripts from social media videos for truthfulness.
+
+CRITICAL: Your training data has a knowledge cutoff. You MUST rely on the real-time web search results provided below for any claims about recent or current events. Do NOT mark claims as false simply because they occurred after your training cutoff.
+{web_section}
+
+RESPOND WITH VALID JSON ONLY:
+{{
+    "overall_verdict": "True" | "Mostly True" | "Partially True" | "Mostly False" | "False",
+    "confidence_score": <0-100>,
+    "summary": "<2-3 sentence summary>",
+    "claims": [{{"claim":"<claim>","verdict":"<verdict>","explanation":"<explanation>","sources":["<source URL or name>"]}}],
+    "sources": [{{"title":"<name>","url":"<url or empty>","description":"<desc>"}}]
+}}
+
+Be thorough and fair. Identify all factual claims. Provide real source URLs from the web search results when available. ONLY output valid JSON."""
+
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"factcheck-{uuid.uuid4()}", system_message=system_message)
+        chat.with_model("anthropic", "claude-sonnet-4-6")
+        response = await chat.send_message(UserMessage(text=f"Fact-check this video transcript ({video_url}):\n\n---\n{transcript}\n---\n\nJSON response only."))
+        response_text = response.strip()
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
+            response_text = "\n".join(lines[1:-1] if lines[-1].strip().startswith("```") else lines[1:])
+        return json.loads(response_text)
+    except json.JSONDecodeError:
+        return {"overall_verdict": "Unable to Determine", "confidence_score": 0, "summary": "Analysis failed. Please try again.", "claims": [], "sources": []}
+    except Exception as e:
+        logger.error(f"Fact-check error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to analyze content: {str(e)}")
+
+# ============ FACT CHECK ROUTE (ASYNC JOB QUEUE) ============
+
+@api_router.post("/fact-check")
+async def fact_check(data: FactCheckRequest, background_tasks: BackgroundTasks, user=Depends(get_current_user)):
+    """Submit a fact-check job. Returns a job_id immediately; process runs in background."""
+    logger.info(f"Fact-check requested for URL: {data.video_url}")
+    await check_scan_limit(user["id"])
+
+    cleanup_old_jobs()
+    job_id = str(uuid.uuid4())
+    job = FactCheckJob(job_id, data.video_url, user["id"])
+    _fact_check_jobs[job_id] = job
+
+    background_tasks.add_task(process_fact_check_background, job)
+
+    return JSONResponse(status_code=202, content={
+        "job_id": job_id,
+        "status": "pending",
+        "message": "Analysis started"
+    })
+
+
+@api_router.get("/fact-check/{job_id}/status")
+async def fact_check_status(job_id: str, user=Depends(get_current_user)):
+    """Poll for fact-check job progress and results."""
+    job = _fact_check_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found or expired")
+    if job.user_id != user["id"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view this job")
+
+    response = {
+        "job_id": job.job_id,
+        "status": job.status,
+        "progress": job.progress,
+        "progress_message": job.progress_message,
+    }
+    if job.status == "completed" and job.result:
+        response["result"] = job.result
+    if job.status == "failed" and job.error:
+        response["error"] = job.error
+
+    return response
+
+
+async def process_fact_check_background(job: FactCheckJob):
+    """Run the entire fact-check pipeline in the background with progress updates."""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        job.status = "processing"
+        job.progress = 5
+        job.progress_message = "Downloading video..."
+
+        # Step 1: Try to download video
+        video_path = None
+        try:
+            video_path = await download_video(job.video_url, temp_dir)
+        except Exception as e:
+            logger.warning(f"Video download exception: {e}")
+
+        transcript = None
+        deepfake_result = None
+
+        if video_path:
+            logger.info("Video downloaded — running full analysis pipeline")
+
+            job.progress = 20
+            job.progress_message = "Extracting audio & analyzing frames..."
+
+            async def run_deepfake():
+                try:
+                    frames = await extract_frames(video_path, temp_dir, num_frames=5)
+                    return await analyze_deepfake(frames, job.video_url)
+                except Exception as e:
+                    logger.warning(f"Deepfake analysis failed: {e}")
+                    return None
+
+            async def run_transcription():
+                try:
+                    audio_path = await extract_audio(video_path, temp_dir)
+                    return await transcribe_audio(audio_path, temp_dir)
+                except Exception as e:
+                    logger.warning(f"Audio extraction/transcription failed: {e}")
+                    return None
+
+            # Run deepfake and transcription in parallel
+            job.progress = 30
+            job.progress_message = "Transcribing speech & detecting deepfakes..."
+
+            deepfake_task = asyncio.create_task(run_deepfake())
+            transcription_task = asyncio.create_task(run_transcription())
+            deepfake_result, transcript = await asyncio.gather(deepfake_task, transcription_task)
+
+            job.progress = 55
+            job.progress_message = "Transcription complete..."
+        else:
+            logger.info("Video download failed — trying subtitle fallback")
+            job.progress = 20
+            job.progress_message = "Trying subtitle extraction..."
+
+        # Fallback: try subtitles if no transcript yet
+        if not transcript or len(transcript.strip()) < 10:
+            try:
+                sub_transcript = await download_subtitles(job.video_url, temp_dir)
+                if sub_transcript:
+                    transcript = sub_transcript
+                    logger.info(f"Using subtitle transcript: {len(transcript)} chars")
+            except Exception as e:
+                logger.warning(f"Subtitle download failed: {e}")
+
+        if not transcript or len(transcript.strip()) < 10:
+            job.status = "failed"
+            job.error = "Could not extract speech or captions from this video. The platform may be blocking downloads from our server, or the video has no spoken content."
+            return
+
+        # Default deepfake result if video wasn't available
+        if not deepfake_result:
+            deepfake_result = DeepfakeResult(
+                is_deepfake=False, confidence=0, risk_level="unknown",
+                analysis="Deepfake analysis was skipped because the video file could not be downloaded. Only the transcript/captions were analyzed.",
+                indicators=[]
+            )
+
+        # Step 4: Web search for context
+        job.progress = 65
+        job.progress_message = "Searching web for context..."
+
+        # Step 5: Fact-check transcript (includes web search internally)
+        job.progress = 75
+        job.progress_message = "AI analyzing claims..."
+
+        result = await fact_check_transcript(transcript, job.video_url)
+
+        job.progress = 95
+        job.progress_message = "Compiling results..."
+
+        check_id = str(uuid.uuid4())
+        claims = [ClaimResult(claim=c.get("claim", ""), verdict=c.get("verdict", "Unknown"), explanation=c.get("explanation", ""), sources=c.get("sources", [])) for c in result.get("claims", [])]
+
+        response_data = FactCheckResponse(
+            id=check_id,
+            overall_verdict=result.get("overall_verdict", "Unable to Determine"),
+            confidence_score=result.get("confidence_score", 0),
+            summary=result.get("summary", ""),
+            transcript=transcript,
+            claims=claims,
+            sources=result.get("sources", []),
+            deepfake=deepfake_result,
+            video_url=job.video_url,
+            created_at=datetime.now(timezone.utc).isoformat()
+        )
+
+        await log_scan(job.user_id, job.video_url, check_id)
+
+        job.progress = 100
+        job.progress_message = "Analysis complete!"
+        job.status = "completed"
+        job.result = response_data.dict()
+
+    except HTTPException as he:
+        job.status = "failed"
+        job.error = str(he.detail)
+    except Exception as e:
+        logger.error(f"Background fact-check error: {e}", exc_info=True)
+        job.status = "failed"
+        job.error = f"Analysis failed: {str(e)}"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+# ============ DATA DELETION (GDPR) ============
+
+@api_router.delete("/account/delete")
+async def delete_account(user=Depends(get_current_user)):
+    uid = user["id"]
+    email = user.get("email", "")
+    # Store deleted email to prevent immediate re-registration abuse
+    if email:
+        await db.deleted_accounts.update_one(
+            {"email": email},
+            {"$set": {"email": email, "deleted_at": datetime.now(timezone.utc).isoformat(), "user_id": uid}},
+            upsert=True
+        )
+    for col in ["users", "subscriptions", "scan_logs", "payment_transactions", "referrals", "push_tokens"]:
+        await db[col].delete_many({"user_id": uid} if col != "users" else {"id": uid})
+    await db.referral_log.delete_many({"$or": [{"referrer_user_id": uid}, {"referred_user_id": uid}]})
+    logger.info(f"Deleted all data for user {uid}")
+    return {"success": True, "message": "All your data has been permanently deleted."}
+
+@api_router.get("/health")
+async def health():
+    return {"status": "ok", "service": "veritas-api"}
+
+app.include_router(api_router)
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    client.close()

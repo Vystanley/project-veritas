@@ -83,3 +83,11 @@ agenthub/agents/youtube/db
 
 # Mobile development
 android-sdk/ my-project.zip
+
+frontend/.metro-cache/
+frontend/.expo/
+frontend/node_modules/
+backend/.venv/
+backend/__pycache__/
+**/__pycache__/
+my-project.zip

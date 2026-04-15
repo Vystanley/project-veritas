@@ -1,0 +1,34 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+# Deploys the Veritas backend as a Docker service on Render's free tier.
+#
+# After the first deploy, set the env-var values marked `sync: false` in the
+# Render dashboard (Environment tab). They are NOT checked into git.
+
+services:
+  - type: web
+    name: veritas-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: frankfurt   # EU region — closest to you; change to oregon/singapore if needed
+    healthCheckPath: /api/health
+    autoDeploy: true    # redeploy on every push to main
+    envVars:
+      - key: DB_NAME
+        value: veritas
+      - key: MONGO_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: EMERGENT_LLM_KEY
+        sync: false
+      - key: STRIPE_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: IMGBB_API_KEY
+        sync: false
+      - key: SERPAPI_API_KEY
+        sync: false
+      - key: BRAVE_SEARCH_API_KEY
+        sync: false

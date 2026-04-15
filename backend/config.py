@@ -23,7 +23,9 @@ VERIFICATION_CODE_EXPIRY_MINUTES = 10
 EMAIL_MOCK_MODE = True  # Set to False when Resend is configured
 
 # ---- Binary paths (resolved lazily — `ensure_ffmpeg()` may update them) ----
-YT_DLP_PATH = shutil.which("yt-dlp") or "/root/.venv/bin/yt-dlp"
+# In the Docker image, ffmpeg/ffprobe live in /usr/bin and yt-dlp is installed
+# as a Python package so `shutil.which` resolves it in /usr/local/bin.
+YT_DLP_PATH = shutil.which("yt-dlp") or "/usr/local/bin/yt-dlp"
 FFMPEG_PATH = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
 FFPROBE_PATH = shutil.which("ffprobe") or "/usr/bin/ffprobe"
 

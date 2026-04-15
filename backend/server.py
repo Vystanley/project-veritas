@@ -6,13 +6,18 @@ packages; this file stays small on purpose.
 """
 
 import logging
+import os
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.cors import CORSMiddleware
 
 from database import client  # noqa: F401 — imported so the client connects at startup
+from rate_limit import limiter
 from routes import (
     account as account_routes,
     auth as auth_routes,
@@ -31,7 +36,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+app = FastAPI(title="Veritas API", version="1.0.0")
+
+# ---- Rate limiting ----
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # ---- Exception handlers ----
 
@@ -84,10 +94,15 @@ app.include_router(api_router)
 
 # ---- Middleware ----
 
+# CORS: read allowed origins from env. Falls back to "*" locally for dev.
+# Note: when allow_origins=["*"], allow_credentials MUST be False per the CORS spec.
+# Since we use bearer-token auth (no cookies), that's fine.
+_cors_env = os.environ.get("CORS_ALLOW_ORIGINS", "*").strip()
+_cors_origins = ["*"] if _cors_env == "*" else [o.strip() for o in _cors_env.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
+    allow_credentials=False,
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

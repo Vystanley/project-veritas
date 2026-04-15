@@ -1,0 +1,33 @@
+# Never ship secrets or local-only config to the Docker image.
+.env
+**/.env
+**/.env.*
+!**/.env.example
+
+# Never ship build caches or dependencies — they're rebuilt inside the image.
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/venv/
+**/node_modules/
+**/.expo/
+**/.metro-cache/
+
+# Never ship git metadata or docs — not needed at runtime.
+.git/
+.gitignore
+.github/
+memory/
+test_reports/
+tests/
+*.md
+!README.md
+
+# Frontend isn't part of the backend image.
+frontend/
+
+# Platform/editor junk.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

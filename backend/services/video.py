@@ -1,6 +1,7 @@
 """Video / audio / subtitle processing pipeline (download, transcribe, extract frames)."""
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -158,6 +159,47 @@ async def download_subtitles(video_url: str, temp_dir: str) -> Optional[str]:
             if len(transcript) > 10:
                 logger.info(f"Subtitles extracted: {len(transcript)} chars")
                 return transcript
+    return None
+
+
+async def get_remote_video_duration(video_url: str) -> Optional[float]:
+    """Fetch duration in seconds from the URL's metadata without downloading the video.
+
+    Uses `yt-dlp --dump-json --skip-download` which is quick (~1-3s) and lets us
+    reject videos that are too long BEFORE paying the download + analysis cost.
+    Returns None if yt-dlp can't determine the duration — callers should treat
+    that as "unknown, let it through" rather than blocking.
+    """
+    cmd = [
+        YT_DLP_PATH,
+        "--dump-json",
+        "--skip-download",
+        "--no-playlist",
+        "--socket-timeout", "20",
+        video_url,
+    ]
+    try:
+        returncode, stdout, stderr = await _run_subprocess(cmd, timeout=30)
+    except subprocess.TimeoutExpired:
+        logger.warning("Duration probe timed out; allowing request through.")
+        return None
+    except Exception as e:
+        logger.warning(f"Duration probe spawn error: {e}")
+        return None
+
+    if returncode != 0:
+        logger.info(f"Duration probe returned rc={returncode}; proceeding without limit check.")
+        return None
+
+    try:
+        info = json.loads(stdout.decode(errors="replace"))
+    except Exception as e:
+        logger.warning(f"Duration probe JSON parse failed: {e}")
+        return None
+
+    duration = info.get("duration")
+    if isinstance(duration, (int, float)) and duration > 0:
+        return float(duration)
     return None
 
 

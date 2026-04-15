@@ -34,6 +34,12 @@ FREE_SCANS_PER_WEEK = 2
 PREMIUM_FUP_MONTHLY_CAP = 175
 REFERRAL_BONUS_SCANS = 3
 
+# ---- Video length limits (seconds) ----
+# Veritas is designed for short-form videos. These caps keep the demo cheap to
+# run on free infra and keep scan times predictable for real users.
+MAX_VIDEO_SECONDS_DEMO = 5 * 60      # 5 minutes for anonymous /demo scans
+MAX_VIDEO_SECONDS_AUTHED = 10 * 60   # 10 minutes for signed-in users
+
 PLANS = {
     "premium_monthly": {"amount": 13.99, "currency": "usd", "label": "Premium Monthly", "days": 30},
     "premium_annual": {"amount": 119.00, "currency": "usd", "label": "Premium Annual", "days": 365},

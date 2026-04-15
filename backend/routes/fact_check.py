@@ -9,17 +9,43 @@ from fastapi.responses import JSONResponse
 from slowapi.util import get_remote_address
 
 from auth import get_current_user
+from config import MAX_VIDEO_SECONDS_AUTHED, MAX_VIDEO_SECONDS_DEMO
 from jobs import cleanup_old_jobs, create_job, get_job
 from models import FactCheckRequest
 from rate_limit import limiter
 from services.fact_check import process_fact_check_background
 from services.subscription import check_scan_limit
+from services.video import get_remote_video_duration
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/fact-check")
 
 
 DEMO_USER_PREFIX = "demo-"
+
+
+def _format_mmss(seconds: float) -> str:
+    """Render seconds as M:SS for friendly error messages."""
+    total = int(seconds)
+    return f"{total // 60}:{total % 60:02d}"
+
+
+async def _enforce_duration_limit(video_url: str, max_seconds: int) -> None:
+    """Raise HTTPException if the target video is longer than `max_seconds`.
+
+    If yt-dlp can't determine the duration we let the request through rather
+    than false-positive on a valid video. The download step still enforces a
+    50 MB file cap as a secondary safety net.
+    """
+    duration = await get_remote_video_duration(video_url)
+    if duration is not None and duration > max_seconds:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Video is {_format_mmss(duration)} long. "
+                f"Veritas only analyzes videos up to {_format_mmss(max_seconds)}."
+            ),
+        )
 
 
 def _demo_user_id(request: Request) -> str:
@@ -42,6 +68,7 @@ async def fact_check(
     """Submit a fact-check job. Returns a job_id immediately; process runs in background."""
     logger.info(f"Fact-check requested for URL: {data.video_url}")
     await check_scan_limit(user["id"])
+    await _enforce_duration_limit(data.video_url, MAX_VIDEO_SECONDS_AUTHED)
 
     await cleanup_old_jobs()
     job_id = str(uuid.uuid4())
@@ -94,6 +121,7 @@ async def fact_check_demo(
 ):
     """Anonymous fact-check. Rate-limited to 3 per IP per day."""
     logger.info(f"Demo fact-check requested for URL: {data.video_url}")
+    await _enforce_duration_limit(data.video_url, MAX_VIDEO_SECONDS_DEMO)
     await cleanup_old_jobs()
     job_id = str(uuid.uuid4())
     demo_uid = _demo_user_id(request)

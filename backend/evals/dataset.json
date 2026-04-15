@@ -17,8 +17,8 @@
       "claim": "The Earth is flat.",
       "expected_verdict": "false",
       "expected_source_domains": ["nasa.gov", "wikipedia.org", "scientificamerican.com"],
-      "notes": "Control case for obvious falsity.",
-      "video_url": "TODO"
+      "notes": "Control case for obvious falsity. Video: @tiktokconspiraciestv arguing Earth is flat.",
+      "video_url": "https://www.tiktok.com/@tiktokconspiraciestv/video/7416398581214514464"
     },
     {
       "id": "control-water-boils",

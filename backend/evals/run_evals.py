@@ -123,10 +123,12 @@ def run_one(base_url: str, item: dict) -> ItemResult:
 
     started = time.time()
     try:
+        # Render's free tier cold-starts in ~50s when the dyno is asleep, so
+        # the very first POST of a run can take much longer than a warm one.
         r = requests.post(
             f"{base_url}/api/fact-check/demo",
             json={"video_url": item["video_url"]},
-            timeout=30,
+            timeout=120,
         )
     except requests.RequestException as e:
         return ItemResult(id=iid, status="submit_failed", error=f"network: {e}")

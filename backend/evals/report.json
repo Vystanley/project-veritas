@@ -1,0 +1,39 @@
+{
+  "base_url": "https://veritas-backend-5l6r.onrender.com",
+  "summary": {
+    "total_items": 1,
+    "scored": 1,
+    "skipped_unfilled": 0,
+    "submit_failed": 0,
+    "backend_failed": 0,
+    "timeout": 0,
+    "avg_verdict_accuracy": 0.5,
+    "source_quality_rate": 1.0
+  },
+  "items": [
+    {
+      "id": "control-flat-earth",
+      "status": "scored",
+      "expected_verdict": "false",
+      "predicted_verdict": "Mostly False",
+      "verdict_score": 0.5,
+      "source_score": 1,
+      "error": "",
+      "raw_confidence": 90,
+      "job_id": "8526ef44-1245-4458-aa65-acb8d427228a",
+      "elapsed_s": 228.9,
+      "sources_cited": [
+        "https://study.com/academy/lesson/earths-rotation-facts-speed.html",
+        "https://www.discovermagazine.com/the-speed-of-earths-rotation-is-1-000-miles-per-hour-heres-why-we-dont-feel-47888",
+        "https://earthsky.org/earth/why-cant-we-feel-earths-spin/",
+        "https://en.wikipedia.org/wiki/Earth%27s_orbit",
+        "https://www.space.com/33527-how-fast-is-earth-moving.html",
+        "https://en.wikipedia.org/wiki/Axial_parallelism",
+        "https://stardate.org/faq/how-fast-is-earth-moving-through-space",
+        "https://en.wikipedia.org/wiki/Empirical_evidence_for_the_spherical_shape_of_Earth",
+        "https://www.tiktok.com/discover/georgia-guide-stone-polaris-time-lapse",
+        "https://en.wikipedia.org/wiki/Ursa_Minor"
+      ]
+    }
+  ]
+}

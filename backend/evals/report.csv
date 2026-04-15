@@ -1,0 +1,2 @@
+id,status,expected_verdict,predicted_verdict,verdict_score,source_score,raw_confidence,elapsed_s,error
+control-flat-earth,scored,false,Mostly False,0.5,1,90,228.9,

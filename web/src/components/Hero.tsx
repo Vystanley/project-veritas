@@ -10,10 +10,9 @@ interface Props {
   error: string | null;
 }
 
-const EXAMPLES = [
-  { label: "TikTok news clip", url: "https://www.tiktok.com/@cnn/video/7290544573890825514" },
-  { label: "TikTok politics", url: "https://www.tiktok.com/@abcnews/video/7301234567890123456" },
-];
+// Replace these with real TikTok URLs you've verified scan successfully.
+// Leaving as empty array for now so users don't hit dead links.
+const EXAMPLES: { label: string; url: string }[] = [];
 
 export function Hero({ url, setUrl, onSubmit, loading, progress, progressMsg, error }: Props) {
   function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {

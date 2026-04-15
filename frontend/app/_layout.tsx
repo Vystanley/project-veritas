@@ -1,9 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View, ActivityIndicator } from 'react-native';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { WELCOME_ACCEPTED_KEY } from './welcome';
 // NOTE: expo-share-intent is temporarily stubbed out — its API shape doesn't
 // match the installed version in Expo Go and it requires a dev-client build
 // to work properly anyway. Re-enable when you build a dev client.
@@ -32,6 +34,28 @@ function InnerLayout() {
   const { user } = useAuth();
   const router = useRouter();
   const segments = useSegments();
+  const [welcomeChecked, setWelcomeChecked] = useState(false);
+
+  // On first mount, check whether the user has accepted the first-launch
+  // disclaimer. If not, bounce them to the welcome screen before anything
+  // else (login, home, share-intent handling, etc.) can happen.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const accepted = await AsyncStorage.getItem(WELCOME_ACCEPTED_KEY);
+        if (!cancelled) {
+          if (accepted !== 'true' && segments[0] !== 'welcome') {
+            router.replace('/welcome');
+          }
+          setWelcomeChecked(true);
+        }
+      } catch {
+        if (!cancelled) setWelcomeChecked(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // When a share intent is received, extract URL and navigate
   useEffect(() => {

@@ -81,6 +81,9 @@ export function Hero({ url, setUrl, onSubmit, loading, progress, progressMsg, er
                 <span>{progressMsg || "Working..."}</span>
                 <span className="text-accent">{progress}%</span>
               </div>
+              <p className="mt-3 text-xs text-textMuted">
+                Usually takes 1 to 3 minutes. First scan after the server wakes up is always the slowest. You can leave this tab open.
+              </p>
             </div>
           )}
 

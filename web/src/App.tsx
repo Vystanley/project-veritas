@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Hero } from "./components/Hero";
 import { Results } from "./components/Results";
 import { HowItWorks } from "./components/HowItWorks";
@@ -32,6 +32,16 @@ export default function App() {
   const [progressMsg, setProgressMsg] = useState("");
   const [result, setResult] = useState<FactCheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastScannedUrl, setLastScannedUrl] = useState<string>("");
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  // Scroll into view whenever a fresh result lands. Gives people a clear
+  // "ok, it's done" moment instead of making them hunt for the answer.
+  useEffect(() => {
+    if (result && resultsRef.current) {
+      resultsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [result]);
 
   async function handleSubmit(videoUrl: string) {
     const validation = validateUrl(videoUrl);
@@ -41,6 +51,7 @@ export default function App() {
     }
     setError(null);
     setResult(null);
+    setLastScannedUrl(videoUrl.trim());
     setLoading(true);
     setProgress(5);
     setProgressMsg("Submitting...");
@@ -75,7 +86,19 @@ export default function App() {
           progressMsg={progressMsg}
           error={error}
         />
-        {result && <Results result={result} />}
+        {result && (
+          <div ref={resultsRef}>
+            <Results
+              result={result}
+              scannedUrl={lastScannedUrl}
+              onScanAnother={() => {
+                setResult(null);
+                setUrl("");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
+          </div>
+        )}
         {!result && !loading && <HowItWorks />}
       </main>
       <Footer />

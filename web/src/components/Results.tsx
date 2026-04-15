@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   CheckCircle2, XCircle, AlertTriangle, HelpCircle,
   FileText, Eye, Shield, Images, ChevronDown, ChevronUp, ExternalLink,
+  RotateCcw, Link2,
 } from "lucide-react";
 import type { FactCheckResult } from "../types";
 
@@ -17,15 +18,31 @@ function verdictStyle(verdict: string) {
 
 interface Props {
   result: FactCheckResult;
+  scannedUrl?: string;
+  onScanAnother?: () => void;
 }
 
-export function Results({ result }: Props) {
+export function Results({ result, scannedUrl, onScanAnother }: Props) {
   const v = verdictStyle(result.overall_verdict);
   const Icon = v.icon;
 
   return (
     <section className="px-4 pb-16">
       <div className="max-w-3xl mx-auto space-y-4">
+        {/* Scanned-URL chip — lets the user see what they just checked without
+            scrolling back to the input. */}
+        {scannedUrl && (
+          <a
+            href={scannedUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="flex items-center gap-2 text-xs text-textMuted hover:text-accent transition-colors px-1 -mb-2"
+          >
+            <Link2 className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="truncate">{scannedUrl}</span>
+          </a>
+        )}
+
         {/* Verdict card */}
         <div
           className="rounded-2xl border p-6 sm:p-8"
@@ -169,6 +186,18 @@ export function Results({ result }: Props) {
               {result.visual_description}
             </p>
           </Collapsible>
+        )}
+
+        {onScanAnother && (
+          <div className="pt-4 flex justify-center">
+            <button
+              onClick={onScanAnother}
+              className="flex items-center gap-2 border border-border hover:border-accent text-textSecondary hover:text-accent rounded-full px-5 py-2.5 text-sm font-medium transition-colors"
+            >
+              <RotateCcw className="w-4 h-4" />
+              Check another video
+            </button>
+          </div>
         )}
       </div>
     </section>

@@ -30,15 +30,31 @@ def _format_mmss(seconds: float) -> str:
     return f"{total // 60}:{total % 60:02d}"
 
 
-async def _enforce_duration_limit(video_url: str, max_seconds: int) -> None:
+async def _enforce_duration_limit(
+    video_url: str, max_seconds: int, require_known_duration: bool = False,
+) -> None:
     """Raise HTTPException if the target video is longer than `max_seconds`.
 
-    If yt-dlp can't determine the duration we let the request through rather
-    than false-positive on a valid video. The download step still enforces a
-    50 MB file cap as a secondary safety net.
+    If `require_known_duration` is True (used for the public demo endpoint),
+    we also reject videos whose duration we can't determine — that usually
+    means yt-dlp couldn't reach the video at all (private, region-locked,
+    login wall, or datacenter IP block), and failing early with a clear
+    message beats failing later with a generic one.
     """
     duration = await get_remote_video_duration(video_url)
-    if duration is not None and duration > max_seconds:
+
+    if duration is None:
+        if require_known_duration:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Couldn't read this video. It may be private, region-locked, "
+                    "age-restricted, or hidden behind a login wall. Try a different URL."
+                ),
+            )
+        return  # authed path: fall through and let the downloader try
+
+    if duration > max_seconds:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -121,7 +137,9 @@ async def fact_check_demo(
 ):
     """Anonymous fact-check. Rate-limited to 3 per IP per day."""
     logger.info(f"Demo fact-check requested for URL: {data.video_url}")
-    await _enforce_duration_limit(data.video_url, MAX_VIDEO_SECONDS_DEMO)
+    await _enforce_duration_limit(
+        data.video_url, MAX_VIDEO_SECONDS_DEMO, require_known_duration=True,
+    )
     await cleanup_old_jobs()
     job_id = str(uuid.uuid4())
     demo_uid = _demo_user_id(request)

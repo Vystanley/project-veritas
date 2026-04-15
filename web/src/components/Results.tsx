@@ -39,7 +39,7 @@ export function Results({ result }: Props) {
                 {v.label}
               </div>
               <div className="mt-1 text-sm text-textSecondary">
-                {Math.round(result.confidence_score * 100)}% confidence
+                {Math.round(result.confidence_score)}% confidence
               </div>
               {result.summary && (
                 <p className="mt-4 text-[15px] leading-relaxed text-textPrimary/90">{result.summary}</p>
@@ -141,7 +141,7 @@ export function Results({ result }: Props) {
               <div>
                 <span className="text-textSecondary">Risk level: </span>
                 <span className="font-semibold">{result.deepfake.risk_level}</span>
-                <span className="text-textMuted"> ({Math.round((result.deepfake.confidence || 0) * 100)}%)</span>
+                <span className="text-textMuted"> ({Math.round(result.deepfake.confidence || 0)}%)</span>
               </div>
               <p className="text-textSecondary leading-relaxed">{result.deepfake.analysis}</p>
               {result.deepfake.indicators?.length > 0 && (

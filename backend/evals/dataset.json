@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "description": "Ground-truth dataset for evaluating Veritas fact-check accuracy. Each item pairs a short video URL with the canonical verdict a competent human fact-checker would give. Source domains are the sites we'd expect Veritas to cite for credible evidence. Fill in the video_url fields with real, short (<5 min) TikTok/Instagram/X links that make the listed claim.",
+  "items": [
+    {
+      "id": "control-moon-landing",
+      "category": "historical-fact",
+      "claim": "The United States landed humans on the moon in 1969 (Apollo 11).",
+      "expected_verdict": "true",
+      "expected_source_domains": ["nasa.gov", "wikipedia.org", "smithsonianmag.com"],
+      "notes": "Control case — any fact-checker should return 'true'. If Veritas fails this, the pipeline is broken.",
+      "video_url": "TODO"
+    },
+    {
+      "id": "control-flat-earth",
+      "category": "science-myth",
+      "claim": "The Earth is flat.",
+      "expected_verdict": "false",
+      "expected_source_domains": ["nasa.gov", "wikipedia.org", "scientificamerican.com"],
+      "notes": "Control case for obvious falsity.",
+      "video_url": "TODO"
+    },
+    {
+      "id": "control-water-boils",
+      "category": "science-fact",
+      "claim": "Pure water boils at 100 degrees Celsius at sea level atmospheric pressure.",
+      "expected_verdict": "true",
+      "expected_source_domains": ["wikipedia.org", "britannica.com"],
+      "notes": "Basic physical chemistry control.",
+      "video_url": "TODO"
+    },
+    {
+      "id": "politics-recent-01",
+      "category": "politics",
+      "claim": "Pick a recent political claim with a published Snopes or PolitiFact ruling. Paste ruling URL in notes.",
+      "expected_verdict": "TODO",
+      "expected_source_domains": ["snopes.com", "politifact.com", "reuters.com", "apnews.com"],
+      "notes": "TODO — link the canonical fact-check ruling here.",
+      "video_url": "TODO"
+    },
+    {
+      "id": "politics-recent-02",
+      "category": "politics",
+      "claim": "TODO",
+      "expected_verdict": "TODO",
+      "expected_source_domains": ["snopes.com", "politifact.com", "reuters.com", "apnews.com"],
+      "notes": "TODO",
+      "video_url": "TODO"
+    },
+    {
+      "id": "health-misinfo-01",
+      "category": "health",
+      "claim": "A common health misinformation claim (e.g. a debunked supplement cure).",
+      "expected_verdict": "false",
+      "expected_source_domains": ["cdc.gov", "nih.gov", "mayoclinic.org", "snopes.com"],
+      "notes": "TODO — Veritas should cite credible medical institutions.",
+      "video_url": "TODO"
+    },
+    {
+      "id": "health-fact-01",
+      "category": "health",
+      "claim": "A well-established health fact (e.g. vaccines prevent measles).",
+      "expected_verdict": "true",
+      "expected_source_domains": ["cdc.gov", "who.int", "nih.gov"],
+      "notes": "Medical consensus check.",
+      "video_url": "TODO"
+    },
+    {
+      "id": "history-fact-01",
+      "category": "history",
+      "claim": "A well-documented historical event.",
+      "expected_verdict": "true",
+      "expected_source_domains": ["wikipedia.org", "britannica.com", "history.com"],
+      "notes": "",
+      "video_url": "TODO"
+    },
+    {
+      "id": "history-myth-01",
+      "category": "history",
+      "claim": "A popular but false historical claim (e.g. Napoleon was unusually short).",
+      "expected_verdict": "false",
+      "expected_source_domains": ["wikipedia.org", "britannica.com", "snopes.com"],
+      "notes": "",
+      "video_url": "TODO"
+    },
+    {
+      "id": "partial-true-01",
+      "category": "mixed",
+      "claim": "A claim with a kernel of truth but exaggerated or missing context.",
+      "expected_verdict": "partially true",
+      "expected_source_domains": ["snopes.com", "politifact.com"],
+      "notes": "Tests whether Veritas can recognize nuance rather than binary true/false.",
+      "video_url": "TODO"
+    },
+    {
+      "id": "partial-true-02",
+      "category": "mixed",
+      "claim": "TODO",
+      "expected_verdict": "partially true",
+      "expected_source_domains": ["snopes.com", "politifact.com"],
+      "notes": "",
+      "video_url": "TODO"
+    },
+    {
+      "id": "recycled-footage-01",
+      "category": "miscaptioned",
+      "claim": "Video footage presented as recent/local but actually older/from elsewhere.",
+      "expected_verdict": "mostly false",
+      "expected_source_domains": ["snopes.com", "reuters.com", "apnews.com"],
+      "notes": "Tests the reverse image search component specifically.",
+      "video_url": "TODO"
+    },
+    {
+      "id": "statistical-claim-01",
+      "category": "statistics",
+      "claim": "A quantitative claim that can be checked against a primary source (census data, official report).",
+      "expected_verdict": "TODO",
+      "expected_source_domains": ["census.gov", "bls.gov", "worldbank.org", "wikipedia.org"],
+      "notes": "Tests whether Veritas handles numbers correctly.",
+      "video_url": "TODO"
+    },
+    {
+      "id": "opinion-not-factual-01",
+      "category": "opinion",
+      "claim": "A pure opinion or value judgment disguised as a factual claim.",
+      "expected_verdict": "unverified",
+      "expected_source_domains": [],
+      "notes": "Veritas should recognize this isn't a verifiable factual claim. 'Unverified' or 'not a factual claim' is the right answer.",
+      "video_url": "TODO"
+    },
+    {
+      "id": "scientific-consensus-01",
+      "category": "science",
+      "claim": "A claim aligned with scientific consensus (e.g. human-caused climate change is real).",
+      "expected_verdict": "true",
+      "expected_source_domains": ["ipcc.ch", "nasa.gov", "nature.com", "sciencemag.org"],
+      "notes": "",
+      "video_url": "TODO"
+    }
+  ]
+}

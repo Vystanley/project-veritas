@@ -48,8 +48,9 @@ async def _enforce_duration_limit(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Couldn't read this video. It may be private, region-locked, "
-                    "age-restricted, or hidden behind a login wall. Try a different URL."
+                    "Couldn't read this video. YouTube often blocks our free demo "
+                    "server, so YouTube links are unreliable here. TikTok, Instagram, "
+                    "and X links work much better. Try one of those instead."
                 ),
             )
         return  # authed path: fall through and let the downloader try

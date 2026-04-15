@@ -12,7 +12,7 @@ interface Props {
 
 const EXAMPLES = [
   { label: "TikTok news clip", url: "https://www.tiktok.com/@cnn/video/7290544573890825514" },
-  { label: "YouTube Short", url: "https://www.youtube.com/shorts/dQw4w9WgXcQ" },
+  { label: "TikTok politics", url: "https://www.tiktok.com/@abcnews/video/7301234567890123456" },
 ];
 
 export function Hero({ url, setUrl, onSubmit, loading, progress, progressMsg, error }: Props) {
@@ -32,9 +32,12 @@ export function Hero({ url, setUrl, onSubmit, loading, progress, progressMsg, er
           <span className="text-accent">actually true?</span>
         </h1>
         <p className="mt-6 text-textSecondary text-lg max-w-xl">
-          Drop in a link from TikTok, YouTube, Instagram, Facebook, or X. Veritas
-          pulls out the claims, checks them against real sources, and tells you if the footage has been
-          floating around the internet long before the post you're looking at.
+          Drop in a link from TikTok, Instagram, Facebook, or X. Veritas pulls out
+          the claims, checks them against real sources, and tells you if the footage
+          has been floating around the internet long before the post you're looking at.
+        </p>
+        <p className="mt-3 text-xs text-textMuted max-w-xl">
+          Heads up: YouTube often blocks our free demo server, so YouTube links are hit or miss. TikTok works best.
         </p>
 
         <div className="mt-10">

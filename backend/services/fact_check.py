@@ -376,9 +376,15 @@ async def process_fact_check_background(job: FactCheckJob):
             return
 
         # If transcript is missing but we have visual content, proceed with a placeholder so the
-        # fact-checker still runs against on-screen text and visible claims.
+        # fact-checker still runs against on-screen text and visible claims. Be explicit about
+        # what happened so users don't assume the video was silent when it wasn't.
         if not has_transcript:
-            transcript = "(No spoken audio in this video — rely on visual content below.)"
+            transcript = (
+                "(Speech recognition couldn't parse the audio on this video. This usually "
+                "happens when background music drowns out the speech, the audio is heavily "
+                "compressed, or the speaker isn't in English. Fact-checking proceeded using "
+                "on-screen text and visual content instead.)"
+            )
 
         if not deepfake_result:
             deepfake_result = DeepfakeResult(

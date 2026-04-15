@@ -11,7 +11,7 @@ from typing import List, Optional
 
 import speech_recognition as sr
 from fastapi import HTTPException
-from pydub import AudioSegment
+from pydub import AudioSegment, effects
 
 from config import FFMPEG_PATH, FFPROBE_PATH, YT_DLP_PATH
 
@@ -290,8 +290,23 @@ async def transcribe_audio(audio_path: str, temp_dir: str) -> str:
         duration_ms = len(audio)
         logger.info(f"Audio duration: {duration_ms/1000:.1f}s")
 
+        # --- Preprocessing to help Google STT with noisy / music-heavy audio ---
+        # TikTok/Reels audio often buries speech under background music. We
+        # normalize peak loudness, apply dynamic range compression (pulls up
+        # quieter speech), then re-normalize. This measurably improves
+        # transcription on mixed-audio clips without needing a paid STT.
+        try:
+            audio = effects.normalize(audio)
+            audio = effects.compress_dynamic_range(audio, threshold=-20.0, ratio=4.0)
+            audio = effects.normalize(audio)
+            # Re-export the processed audio so the recognizer reads the cleaned version.
+            audio.export(wav_path, format="wav")
+            logger.info("Audio preprocessed: normalized + compressed")
+        except Exception as e:
+            logger.warning(f"Audio preprocessing failed (continuing with raw audio): {e}")
+
         recognizer = sr.Recognizer()
-        recognizer.energy_threshold = 300
+        recognizer.energy_threshold = 200  # slightly more sensitive than default
 
         chunk_duration_ms = 55000  # ~55 seconds per chunk (Google's limit is ~60s)
 

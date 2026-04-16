@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "Veritas",
+    "slug": "veritas",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -12,9 +12,10 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.stasv.veritas",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000"
+        "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true
     },
@@ -28,25 +29,34 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/splash-image.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#000"
+          "backgroundColor": "#000000"
         }
       ],
       [
         "expo-share-intent",
         {
-          "iosActivationRules": {
-            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
-            "NSExtensionActivationSupportsWebPageWithMaxCount": 1
-          },
-          "androidIntentFilters": ["text/*"]
+          "androidIntentFilters": [
+            "text/*"
+          ]
         }
       ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f885f099-49d2-4a05-a68e-173813c4f9a3"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "f885f099-49d2-4a05-a68e-173813c4f9a3"
+      }
     }
   }
 }

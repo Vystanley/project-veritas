@@ -74,7 +74,7 @@ RESPOND WITH VALID JSON ONLY:
             session_id=f"visual-df-{uuid.uuid4()}",
             system_message=system_msg,
         )
-        chat.with_model("anthropic", "claude-haiku-4-5")
+        chat.with_model("anthropic", "claude-sonnet-4-6")
 
         user_msg = UserMessage(
             text=(

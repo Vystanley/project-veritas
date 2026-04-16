@@ -24,7 +24,7 @@ When you submit a video URL, Veritas runs a multi-stage analysis pipeline:
 
 1. **Subtitle extraction** — Checks for existing captions first (instant) before falling back to audio transcription.
 2. **Video download & frame extraction** — Downloads the video via yt-dlp and pulls representative frames for visual analysis.
-3. **Speech-to-text** — Converts spoken audio to text using Google Speech Recognition, capped at 60 seconds for speed.
+3. **Speech-to-text** — Converts spoken audio to text using Google Speech Recognition, capped at 120 seconds for speed.
 4. **Visual + deepfake analysis** — A single Claude AI vision call reads all on-screen text (captions, overlays, headlines, graphs) and simultaneously checks for deepfake/AI-generation indicators.
 5. **Reverse image search** — Uploads a key frame to Google Lens via SerpApi to detect if footage has been recycled or mis-contextualized from older content.
 6. **Web search** — Queries DuckDuckGo, Wikipedia, Brave Search, and Tavily in parallel to find real sources related to the claims.
@@ -77,7 +77,7 @@ FastAPI Backend (Render)
    ├─ Video download (yt-dlp, 2 strategies, 60s timeout)
    │
    ├─ ┌─ Visual + Deepfake analysis ─── Claude Sonnet (1 combined call)
-   │  ├─ Audio transcription ─────────── Google STT (60s cap, 1 chunk)
+   │  ├─ Audio transcription ─────────── Google STT (120s cap, 2 chunks)
    │  ├─ Reverse image search ────────── imgbb → SerpApi Google Lens
    │  └─ Web search (if subtitles found early, runs in parallel)
    │
@@ -97,7 +97,7 @@ Key design decisions:
 - **Subtitles first** — Checking for existing captions before downloading video saves 30-60 seconds on videos that have them.
 - **Parallel execution** — Deepfake, visual analysis, transcription, and reverse image search all run concurrently.
 - **Citation gating** — The AI receives a numbered source pool from real web searches and can only cite those IDs. Any hallucinated URL is automatically dropped.
-- **Single-chunk transcription** — Audio is capped at 60 seconds and processed in one Google STT request, keeping transcription fast without requiring a paid API.
+- **Capped transcription** — Audio is capped at 120 seconds (2 chunks max), balancing transcript completeness with speed on free infrastructure.
 
 ---
 
@@ -164,7 +164,7 @@ This lets me measure whether code changes improve or regress fact-checking quali
 The scan pipeline went through several rounds of optimization to bring scan times from 10+ minutes down to ~2 minutes on free infrastructure:
 
 - Subtitles are checked before video download (saves 30-60s when available)
-- Audio transcription capped at 60 seconds (1 Google STT chunk instead of 5+)
+- Audio transcription capped at 120 seconds (2 chunks instead of 5+)
 - Visual analysis and deepfake detection merged into a single LLM call
 - Search query extraction uses Claude Haiku (5x faster than Sonnet for this task)
 - Web search starts in parallel with video analysis when subtitles are found early
@@ -241,7 +241,7 @@ This is a student project, not a production fact-checking service. Some honest l
 - **Audio transcription uses Google's free STT** — It struggles with heavy background music, non-English speech, and heavily compressed audio.
 - **AI can make mistakes** — Claude is powerful but not infallible. The verdict should be treated as a starting point for critical thinking, not a definitive truth.
 - **Platform blocks** — YouTube frequently blocks downloads from cloud servers. TikTok works most reliably.
-- **60-second audio cap** — Longer videos only have their first minute transcribed. This is a speed/completeness tradeoff.
+- **120-second audio cap** — Longer videos only have their first two minutes transcribed. This is a speed/completeness tradeoff.
 
 ---
 

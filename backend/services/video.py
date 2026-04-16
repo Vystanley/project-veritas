@@ -291,9 +291,9 @@ async def transcribe_audio(audio_path: str, temp_dir: str) -> str:
         duration_ms = len(audio)
         logger.info(f"Audio duration: {duration_ms/1000:.1f}s")
 
-        # Cap at 60s — transcribing more is slow and unnecessary for fact-checking.
-        # Google free STT processes ~55s chunks sequentially; 60s = 1 chunk = fastest.
-        MAX_TRANSCRIBE_MS = 60_000
+        # Cap at 120s — balances speed with transcript completeness.
+        # Google free STT processes ~55s chunks sequentially; 120s = 2 chunks.
+        MAX_TRANSCRIBE_MS = 120_000
         if duration_ms > MAX_TRANSCRIBE_MS:
             logger.info(f"Trimming audio from {duration_ms/1000:.0f}s to {MAX_TRANSCRIBE_MS/1000:.0f}s for transcription")
             audio = audio[:MAX_TRANSCRIBE_MS]

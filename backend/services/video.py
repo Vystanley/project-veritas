@@ -74,7 +74,7 @@ async def download_video(video_url: str, temp_dir: str) -> Optional[str]:
             # else: rely on PATH — yt-dlp will find ffmpeg/ffprobe on its own
         cmd += [
             "--no-playlist",
-            "--max-filesize", "50m",
+            "--max-filesize", "25m",
             "--socket-timeout", "30",
             *extra_args,
             "-o", video_path,
@@ -265,10 +265,10 @@ async def extract_frames(video_path: str, temp_dir: str, num_frames: int = 5) ->
 
 
 async def extract_audio(video_path: str, temp_dir: str) -> str:
-    """Extract audio from video using ffmpeg."""
-    audio_path = os.path.join(temp_dir, "audio.mp3")
-    cmd = [FFMPEG_PATH, "-i", video_path, "-vn", "-acodec", "libmp3lame", "-q:a", "2", audio_path, "-y"]
-    await _run_subprocess(cmd, timeout=60)
+    """Extract audio from video using ffmpeg — straight to 16kHz mono WAV for STT."""
+    audio_path = os.path.join(temp_dir, "audio.wav")
+    cmd = [FFMPEG_PATH, "-i", video_path, "-vn", "-ar", "16000", "-ac", "1", "-f", "wav", audio_path, "-y"]
+    await _run_subprocess(cmd, timeout=30)
     if not os.path.exists(audio_path) or os.path.getsize(audio_path) < 1000:
         raise HTTPException(status_code=400, detail="Could not extract audio from video")
     return audio_path
@@ -277,20 +277,23 @@ async def extract_audio(video_path: str, temp_dir: str) -> str:
 async def transcribe_audio(audio_path: str, temp_dir: str) -> str:
     """Transcribe audio using Google Speech Recognition (free, no API key required)."""
     try:
-        wav_path = os.path.join(temp_dir, "audio_sr.wav")
-
-        cmd = [FFMPEG_PATH, "-i", audio_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path, "-y"]
-        await _run_subprocess(cmd, timeout=60)
-
-        if not os.path.exists(wav_path) or os.path.getsize(wav_path) < 1000:
-            raise Exception("WAV conversion failed")
+        # If already WAV (from extract_audio), use directly; otherwise convert.
+        if audio_path.endswith(".wav"):
+            wav_path = audio_path
+        else:
+            wav_path = os.path.join(temp_dir, "audio_sr.wav")
+            cmd = [FFMPEG_PATH, "-i", audio_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path, "-y"]
+            await _run_subprocess(cmd, timeout=30)
+            if not os.path.exists(wav_path) or os.path.getsize(wav_path) < 1000:
+                raise Exception("WAV conversion failed")
 
         audio = AudioSegment.from_wav(wav_path)
         duration_ms = len(audio)
         logger.info(f"Audio duration: {duration_ms/1000:.1f}s")
 
-        # Cap at 120s — transcribing more is slow and unnecessary for fact-checking.
-        MAX_TRANSCRIBE_MS = 120_000
+        # Cap at 60s — transcribing more is slow and unnecessary for fact-checking.
+        # Google free STT processes ~55s chunks sequentially; 60s = 1 chunk = fastest.
+        MAX_TRANSCRIBE_MS = 60_000
         if duration_ms > MAX_TRANSCRIBE_MS:
             logger.info(f"Trimming audio from {duration_ms/1000:.0f}s to {MAX_TRANSCRIBE_MS/1000:.0f}s for transcription")
             audio = audio[:MAX_TRANSCRIBE_MS]

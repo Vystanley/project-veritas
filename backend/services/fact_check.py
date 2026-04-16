@@ -16,7 +16,7 @@ from config import EMERGENT_LLM_KEY
 from jobs import FactCheckJob
 from models import ClaimResult, DeepfakeResult, FactCheckResponse, ReverseImageResult
 from services.deepfake import analyze_deepfake
-from services.visual_analysis import analyze_visual_content
+from services.visual_analysis import analyze_visual_and_deepfake
 from services.reverse_image_search import (
     reverse_image_search,
     format_for_llm as format_reverse_image_for_llm,
@@ -319,23 +319,15 @@ async def process_fact_check_background(job: FactCheckJob):
                 logger.warning(f"Frame extraction failed: {e}")
                 frames = []
 
-            async def run_deepfake():
+            async def run_visual_and_deepfake():
+                """Combined visual description + deepfake in ONE LLM call."""
                 if not frames:
-                    return None
+                    return None, None
                 try:
-                    return await analyze_deepfake(frames, job.video_url)
+                    return await analyze_visual_and_deepfake(frames, job.video_url)
                 except Exception as e:
-                    logger.warning(f"Deepfake analysis failed: {e}")
-                    return None
-
-            async def run_visual():
-                if not frames:
-                    return None
-                try:
-                    return await analyze_visual_content(frames, job.video_url)
-                except Exception as e:
-                    logger.warning(f"Visual analysis failed: {e}")
-                    return None
+                    logger.warning(f"Combined visual+deepfake failed: {e}")
+                    return None, None
 
             async def run_transcription():
                 # Skip audio transcription if we already have subtitles
@@ -359,15 +351,14 @@ async def process_fact_check_background(job: FactCheckJob):
                     return None
 
             job.progress = 30
-            job.progress_message = "Transcribing speech, reading screen, checking for recycled footage..."
+            job.progress_message = "Reading screen, checking for deepfakes & recycled footage..."
             await job.save()
 
-            deepfake_task = asyncio.create_task(run_deepfake())
-            visual_task = asyncio.create_task(run_visual())
+            visual_df_task = asyncio.create_task(run_visual_and_deepfake())
             transcription_task = asyncio.create_task(run_transcription())
             reverse_image_task = asyncio.create_task(run_reverse_image())
-            deepfake_result, visual_description, transcript, reverse_image_data = await asyncio.gather(
-                deepfake_task, visual_task, transcription_task, reverse_image_task
+            (visual_description, deepfake_result), transcript, reverse_image_data = await asyncio.gather(
+                visual_df_task, transcription_task, reverse_image_task
             )
 
             job.progress = 55

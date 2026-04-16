@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   CheckCircle2, XCircle, AlertTriangle, HelpCircle,
   FileText, Eye, Shield, Images, ChevronDown, ChevronUp, ExternalLink,
-  RotateCcw, Link2,
+  RotateCcw, Link2, Copy, Check,
 } from "lucide-react";
 import type { FactCheckResult } from "../types";
 
@@ -25,6 +25,26 @@ interface Props {
 export function Results({ result, scannedUrl, onScanAnother }: Props) {
   const v = verdictStyle(result.overall_verdict);
   const Icon = v.icon;
+  const [copied, setCopied] = useState(false);
+
+  function copyVerdict() {
+    const lines = [
+      `Verdict: ${result.overall_verdict} (${Math.round(result.confidence_score)}% confidence)`,
+      result.summary,
+      "",
+      `Claims (${result.claims?.length || 0}):`,
+      ...(result.claims || []).map(
+        (c, i) => `${i + 1}. [${c.verdict}] ${c.claim}`
+      ),
+      "",
+      scannedUrl ? `Video: ${scannedUrl}` : "",
+      "Checked by Veritas — https://project-veritas-mauve.vercel.app",
+    ];
+    navigator.clipboard.writeText(lines.filter(Boolean).join("\n")).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
 
   return (
     <section className="px-4 pb-16">
@@ -61,6 +81,13 @@ export function Results({ result, scannedUrl, onScanAnother }: Props) {
               {result.summary && (
                 <p className="mt-4 text-[15px] leading-relaxed text-textPrimary/90">{result.summary}</p>
               )}
+              <button
+                onClick={copyVerdict}
+                className="mt-4 flex items-center gap-1.5 text-xs text-textSecondary hover:text-accent transition-colors"
+              >
+                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? "Copied!" : "Copy verdict"}
+              </button>
             </div>
           </div>
         </div>

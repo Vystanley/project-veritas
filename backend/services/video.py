@@ -332,12 +332,6 @@ async def transcribe_audio(audio_path: str, temp_dir: str) -> str:
                 logger.warning(f"Chunk {i+1}: Could not understand audio")
             except sr.RequestError as e:
                 logger.warning(f"Chunk {i+1}: Google STT request error: {e}")
-                try:
-                    text = recognizer.recognize_google(audio_data, language="en-US")
-                    if text:
-                        full_transcript.append(text)
-                except Exception:
-                    pass
 
         transcript = " ".join(full_transcript)
         if transcript and len(transcript) > 10:

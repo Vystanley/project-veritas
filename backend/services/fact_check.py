@@ -268,6 +268,24 @@ async def process_fact_check_background(job: FactCheckJob):
     try:
         job.status = "processing"
         job.progress = 5
+        job.progress_message = "Checking for subtitles..."
+        await job.save()
+
+        transcript = None
+        deepfake_result = None
+        visual_description = None
+        reverse_image_data = None
+
+        # --- Try subtitles FIRST (fast metadata fetch, no video download) ---
+        try:
+            sub_transcript = await download_subtitles(job.video_url, temp_dir)
+            if sub_transcript and len(sub_transcript.strip()) >= 10:
+                transcript = sub_transcript
+                logger.info(f"Got subtitle transcript early: {len(transcript)} chars")
+        except Exception as e:
+            logger.warning(f"Early subtitle download failed: {e}")
+
+        job.progress = 10
         job.progress_message = "Downloading video..."
         await job.save()
 
@@ -276,11 +294,6 @@ async def process_fact_check_background(job: FactCheckJob):
             video_path = await download_video(job.video_url, temp_dir)
         except Exception as e:
             logger.exception(f"Video download exception: {type(e).__name__}: {e}")
-
-        transcript = None
-        deepfake_result = None
-        visual_description = None
-        reverse_image_data = None
 
         if video_path:
             logger.info("Video downloaded — running full analysis pipeline")
@@ -315,6 +328,10 @@ async def process_fact_check_background(job: FactCheckJob):
                     return None
 
             async def run_transcription():
+                # Skip audio transcription if we already have subtitles
+                if transcript and len(transcript.strip()) >= 10:
+                    logger.info("Skipping audio transcription — already have subtitles")
+                    return transcript
                 try:
                     audio_path = await extract_audio(video_path, temp_dir)
                     return await transcribe_audio(audio_path, temp_dir)
@@ -347,19 +364,10 @@ async def process_fact_check_background(job: FactCheckJob):
             job.progress_message = "Audio + visual analysis complete..."
             await job.save()
         else:
-            logger.info("Video download failed — trying subtitle fallback")
+            logger.info("Video download failed — subtitle-only mode")
             job.progress = 20
-            job.progress_message = "Trying subtitle extraction..."
+            job.progress_message = "Video download failed, using subtitles..."
             await job.save()
-
-        if not transcript or len(transcript.strip()) < 10:
-            try:
-                sub_transcript = await download_subtitles(job.video_url, temp_dir)
-                if sub_transcript:
-                    transcript = sub_transcript
-                    logger.info(f"Using subtitle transcript: {len(transcript)} chars")
-            except Exception as e:
-                logger.warning(f"Subtitle download failed: {e}")
 
         has_transcript = bool(transcript and len(transcript.strip()) >= 10)
         has_visual = bool(visual_description and len(visual_description.strip()) >= 40)

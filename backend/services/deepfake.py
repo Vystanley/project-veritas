@@ -24,7 +24,7 @@ async def analyze_deepfake(frames: List[str], video_url: str) -> DeepfakeResult:
 
     try:
         image_contents = []
-        for frame_path in frames[:5]:
+        for frame_path in frames[:3]:
             with open(frame_path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode("utf-8")
                 image_contents.append(ImageContent(image_base64=b64))
@@ -52,7 +52,7 @@ RESPOND WITH VALID JSON ONLY:
 Be conservative — only flag as high risk if strong indicators are present. Many legitimate videos have minor artifacts from compression."""
 
         chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"deepfake-{uuid.uuid4()}", system_message=system_msg)
-        chat.with_model("anthropic", "claude-sonnet-4-6")
+        chat.with_model("anthropic", "claude-haiku-4-5")
 
         user_msg = UserMessage(
             text=(

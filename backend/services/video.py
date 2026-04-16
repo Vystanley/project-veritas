@@ -53,7 +53,6 @@ async def download_video(video_url: str, temp_dir: str) -> Optional[str]:
     strategies = [
         ["-f", "best[ext=mp4]/best", "--merge-output-format", "mp4"],
         ["-f", "best"],
-        ["--impersonate", "chrome", "-f", "best[ext=mp4]/best", "--merge-output-format", "mp4"],
     ]
 
     for i, extra_args in enumerate(strategies):
@@ -83,7 +82,7 @@ async def download_video(video_url: str, temp_dir: str) -> Optional[str]:
         ]
         logger.info(f"yt-dlp strategy {i+1} running: {' '.join(cmd)}")
         try:
-            returncode, stdout, stderr = await _run_subprocess(cmd, timeout=120)
+            returncode, stdout, stderr = await _run_subprocess(cmd, timeout=60)
         except subprocess.TimeoutExpired:
             logger.warning(f"Video download timed out (strategy {i+1})")
             continue
@@ -218,7 +217,7 @@ async def _probe_duration(video_path: str) -> Optional[float]:
     return None
 
 
-async def extract_frames(video_path: str, temp_dir: str, num_frames: int = 8) -> List[str]:
+async def extract_frames(video_path: str, temp_dir: str, num_frames: int = 5) -> List[str]:
     """Extract evenly-spaced frames across the entire video (not just the first seconds).
 
     Uses ffprobe to get duration, then samples num_frames points uniformly.
@@ -241,7 +240,7 @@ async def extract_frames(video_path: str, temp_dir: str, num_frames: int = 8) ->
             out = os.path.join(frames_dir, f"frame_{idx:03d}.jpg")
             cmd = [
                 FFMPEG_PATH, "-ss", f"{ts:.3f}", "-i", video_path,
-                "-frames:v", "1", "-vf", "scale=768:-1",
+                "-frames:v", "1", "-vf", "scale=512:-1",
                 "-q:v", "4", out, "-y",
             ]
             try:
@@ -289,6 +288,13 @@ async def transcribe_audio(audio_path: str, temp_dir: str) -> str:
         audio = AudioSegment.from_wav(wav_path)
         duration_ms = len(audio)
         logger.info(f"Audio duration: {duration_ms/1000:.1f}s")
+
+        # Cap at 120s — transcribing more is slow and unnecessary for fact-checking.
+        MAX_TRANSCRIBE_MS = 120_000
+        if duration_ms > MAX_TRANSCRIBE_MS:
+            logger.info(f"Trimming audio from {duration_ms/1000:.0f}s to {MAX_TRANSCRIBE_MS/1000:.0f}s for transcription")
+            audio = audio[:MAX_TRANSCRIBE_MS]
+            duration_ms = MAX_TRANSCRIBE_MS
 
         # --- Preprocessing to help Google STT with noisy / music-heavy audio ---
         # TikTok/Reels audio often buries speech under background music. We

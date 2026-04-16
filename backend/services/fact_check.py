@@ -47,7 +47,7 @@ async def extract_search_queries(transcript: str) -> list:
                 "news. Keep each query under 8 words. Output valid JSON array only, no other text."
             ),
         )
-        chat.with_model("anthropic", "claude-sonnet-4-6")
+        chat.with_model("anthropic", "claude-haiku-4-5")
         msg = UserMessage(text=f"Extract search queries for fact-checking this transcript:\n\n{transcript[:800]}")
         response = await chat.send_message(msg)
         text = response.strip() if isinstance(response, str) else response.text.strip()
@@ -128,14 +128,18 @@ async def fact_check_transcript(
     video_url: str,
     visual_description: str | None = None,
     reverse_image: dict | None = None,
+    web_context_override: tuple | None = None,
 ) -> dict:
     """Analyze transcript + visual content for fact-checking, enhanced with real-time web search."""
     try:
-        # Build a combined search query so web context also covers on-screen claims.
-        search_text = transcript
-        if visual_description:
-            search_text = f"{transcript}\n\n{visual_description}"
-        web_context, web_sources = await search_web_context(search_text)
+        # Use pre-fetched web context if available, otherwise search now.
+        if web_context_override:
+            web_context, web_sources = web_context_override
+        else:
+            search_text = transcript
+            if visual_description:
+                search_text = f"{transcript}\n\n{visual_description}"
+            web_context, web_sources = await search_web_context(search_text)
 
         reverse_image_block = format_reverse_image_for_llm(reverse_image or {})
 
@@ -277,6 +281,7 @@ async def process_fact_check_background(job: FactCheckJob):
         reverse_image_data = None
 
         # --- Try subtitles FIRST (fast metadata fetch, no video download) ---
+        early_web_context = None   # will hold (web_context, web_sources) if available early
         try:
             sub_transcript = await download_subtitles(job.video_url, temp_dir)
             if sub_transcript and len(sub_transcript.strip()) >= 10:
@@ -284,6 +289,11 @@ async def process_fact_check_background(job: FactCheckJob):
                 logger.info(f"Got subtitle transcript early: {len(transcript)} chars")
         except Exception as e:
             logger.warning(f"Early subtitle download failed: {e}")
+
+        # If we got subtitles, kick off web search NOW — it runs while video downloads.
+        early_web_task = None
+        if transcript:
+            early_web_task = asyncio.create_task(search_web_context(transcript))
 
         job.progress = 10
         job.progress_message = "Downloading video..."
@@ -304,7 +314,7 @@ async def process_fact_check_background(job: FactCheckJob):
 
             # Extract frames ONCE and share between deepfake + visual analysis
             try:
-                frames = await extract_frames(video_path, temp_dir, num_frames=8)
+                frames = await extract_frames(video_path, temp_dir, num_frames=5)
             except Exception as e:
                 logger.warning(f"Frame extraction failed: {e}")
                 frames = []
@@ -404,8 +414,19 @@ async def process_fact_check_background(job: FactCheckJob):
                 indicators=[],
             )
 
+        # Collect early web search results if available, otherwise search now.
+        web_context_override = None
+        if early_web_task:
+            try:
+                early_web_context = await early_web_task
+                if early_web_context and early_web_context[1]:
+                    web_context_override = early_web_context
+                    logger.info("Using early web search results (ran in parallel with video analysis)")
+            except Exception as e:
+                logger.warning(f"Early web search failed: {e}")
+
         job.progress = 65
-        job.progress_message = "Searching web for context..."
+        job.progress_message = "Searching web for context..." if not web_context_override else "AI analyzing claims..."
         await job.save()
 
         job.progress = 75
@@ -413,7 +434,8 @@ async def process_fact_check_background(job: FactCheckJob):
         await job.save()
 
         result = await fact_check_transcript(
-            transcript, job.video_url, visual_description, reverse_image_data
+            transcript, job.video_url, visual_description, reverse_image_data,
+            web_context_override=web_context_override,
         )
 
         job.progress = 95

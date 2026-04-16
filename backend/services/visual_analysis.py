@@ -28,7 +28,7 @@ async def analyze_visual_content(frames: List[str], video_url: str) -> Optional[
 
     try:
         image_contents = []
-        for frame_path in frames[:8]:
+        for frame_path in frames[:5]:
             with open(frame_path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode("utf-8")
                 image_contents.append(ImageContent(image_base64=b64))

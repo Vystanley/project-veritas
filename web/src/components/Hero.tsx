@@ -15,6 +15,10 @@ const EXAMPLES: { label: string; url: string }[] = [
     label: "Chongqing underground city",
     url: "https://www.tiktok.com/@dylan.page/video/7456898678138146080",
   },
+  {
+    label: "Flat earth Antarctica",
+    url: "https://www.tiktok.com/@flatearthantarctica/video/7625252294820465942",
+  },
 ];
 
 export function Hero({ url, setUrl, onSubmit, loading, progress, progressMsg, error }: Props) {

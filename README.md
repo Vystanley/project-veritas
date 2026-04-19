@@ -245,6 +245,16 @@ This is a student project, not a production fact-checking service. Some honest l
 
 ---
 
+## Future Improvements
+
+- **Paid STT integration** — Switching to Deepgram or AssemblyAI would reduce transcription from ~15 seconds to ~2 seconds and support non-English languages.
+- **Real worker queue** — Replace the in-process background tasks with Celery or arq + Redis so scans survive server restarts and can be horizontally scaled.
+- **Per-claim source chips in mobile UI** — Claims carry source arrays but the mobile app doesn't yet render them as tappable links.
+- **Multi-language support** — Currently optimized for English-language videos. Adding language detection and multilingual STT would expand coverage significantly.
+- **iOS App Store release** — Requires the $99/year Apple Developer Program. Currently iOS users can run it via Expo Go on the same WiFi.
+
+---
+
 ## What I Learned
 
 Building Veritas taught me how to design and optimize a real async pipeline, work with multiple AI APIs, handle the messiness of real-world video processing (codec issues, platform blocks, rate limits), deploy across free-tier infrastructure, and think critically about the difference between "AI says it's true" and "here are the sources — decide for yourself."

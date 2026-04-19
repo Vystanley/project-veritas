@@ -13,8 +13,8 @@ load_dotenv(ROOT_DIR / ".env")
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ["JWT_SECRET"]
-EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
-STRIPE_API_KEY = os.environ["STRIPE_API_KEY"]
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
 
 # ---- Auth ----
 JWT_ALGORITHM = "HS256"

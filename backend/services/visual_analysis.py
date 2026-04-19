@@ -8,15 +8,17 @@ for deepfake / AI-generation indicators in the same pass, saving an API round tr
 import base64
 import json
 import logging
-import uuid
 from typing import List, Optional, Tuple
 
-from emergentintegrations.llm.chat import ImageContent, LlmChat, UserMessage
+import anthropic
 
-from config import EMERGENT_LLM_KEY
+from config import ANTHROPIC_API_KEY
 from models import DeepfakeResult
 
 logger = logging.getLogger(__name__)
+
+# Reuse a single async client across calls (connection pooling).
+_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
 
 async def analyze_visual_and_deepfake(
@@ -35,11 +37,27 @@ async def analyze_visual_and_deepfake(
         return None, default_deepfake
 
     try:
-        image_contents = []
+        # Build the content blocks: images first, then the text prompt.
+        content: list = []
         for frame_path in frames[:5]:
             with open(frame_path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode("utf-8")
-                image_contents.append(ImageContent(image_base64=b64))
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": b64,
+                },
+            })
+
+        content.append({
+            "type": "text",
+            "text": (
+                f"Analyze these {len(frames[:5])} frames from a social media video "
+                f"({video_url}). Provide both visual description and deepfake analysis in JSON."
+            ),
+        })
 
         system_msg = """You are a combined visual analyst and deepfake detector for a fact-checking system.
 You will receive frames from a social media video. You must do TWO tasks in a SINGLE response:
@@ -69,22 +87,14 @@ RESPOND WITH VALID JSON ONLY:
     }
 }"""
 
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"visual-df-{uuid.uuid4()}",
-            system_message=system_msg,
+        response = await _client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=system_msg,
+            messages=[{"role": "user", "content": content}],
         )
-        chat.with_model("anthropic", "claude-sonnet-4-6")
 
-        user_msg = UserMessage(
-            text=(
-                f"Analyze these {len(image_contents)} frames from a social media video "
-                f"({video_url}). Provide both visual description and deepfake analysis in JSON."
-            ),
-            file_contents=image_contents,
-        )
-        response = await chat.send_message(user_msg)
-        response_text = response.strip()
+        response_text = response.content[0].text.strip()
         if response_text.startswith("```"):
             lines = response_text.split("\n")
             start = 1

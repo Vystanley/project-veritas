@@ -9,10 +9,10 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+import anthropic
 from fastapi import HTTPException
 
-from config import EMERGENT_LLM_KEY
+from config import ANTHROPIC_API_KEY
 from jobs import FactCheckJob
 from models import ClaimResult, DeepfakeResult, FactCheckResponse, ReverseImageResult
 from services.deepfake import analyze_deepfake
@@ -33,24 +33,27 @@ from services.video import (
 
 logger = logging.getLogger(__name__)
 
+_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+
 
 async def extract_search_queries(transcript: str) -> list:
     """Use LLM to extract 3-5 focused search queries from a video transcript for fact-checking."""
     try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"search-{uuid.uuid4()}",
-            system_message=(
+        response = await _client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=256,
+            system=(
                 "You extract search queries from video transcripts. Output ONLY a JSON array of "
                 "3-5 short, specific search queries that would help fact-check the claims in the "
                 "transcript. Focus on people's names, events, titles, specific facts, and recent "
                 "news. Keep each query under 8 words. Output valid JSON array only, no other text."
             ),
+            messages=[{
+                "role": "user",
+                "content": f"Extract search queries for fact-checking this transcript:\n\n{transcript[:800]}",
+            }],
         )
-        chat.with_model("anthropic", "claude-haiku-4-5")
-        msg = UserMessage(text=f"Extract search queries for fact-checking this transcript:\n\n{transcript[:800]}")
-        response = await chat.send_message(msg)
-        text = response.strip() if isinstance(response, str) else response.text.strip()
+        text = response.content[0].text.strip()
         if text.startswith("```"):
             text = text.split("```")[1]
             if text.startswith("json"):
@@ -206,10 +209,13 @@ For each claim, note in the explanation whether it came from spoken audio, on-sc
             "in the summary and in an appropriate claim's explanation. JSON response only."
         )
 
-        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"factcheck-{uuid.uuid4()}", system_message=system_message)
-        chat.with_model("anthropic", "claude-sonnet-4-6")
-        response = await chat.send_message(UserMessage(text=user_text))
-        response_text = response.strip()
+        response = await _client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            system=system_message,
+            messages=[{"role": "user", "content": user_text}],
+        )
+        response_text = response.content[0].text.strip()
         if response_text.startswith("```"):
             lines = response_text.split("\n")
             response_text = "\n".join(lines[1:-1] if lines[-1].strip().startswith("```") else lines[1:])

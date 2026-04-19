@@ -3,15 +3,16 @@
 import base64
 import json
 import logging
-import uuid
 from typing import List
 
-from emergentintegrations.llm.chat import ImageContent, LlmChat, UserMessage
+import anthropic
 
-from config import EMERGENT_LLM_KEY
+from config import ANTHROPIC_API_KEY
 from models import DeepfakeResult
 
 logger = logging.getLogger(__name__)
+
+_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
 
 async def analyze_deepfake(frames: List[str], video_url: str) -> DeepfakeResult:
@@ -23,11 +24,28 @@ async def analyze_deepfake(frames: List[str], video_url: str) -> DeepfakeResult:
         )
 
     try:
-        image_contents = []
+        # Build content blocks: images + text prompt
+        content: list = []
         for frame_path in frames[:3]:
             with open(frame_path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode("utf-8")
-                image_contents.append(ImageContent(image_base64=b64))
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": b64,
+                },
+            })
+
+        content.append({
+            "type": "text",
+            "text": (
+                f"Analyze these {len(frames[:3])} frames from a social media video for "
+                f"deepfake/AI-generation indicators. Video URL: {video_url}\n\n"
+                "Provide your deepfake analysis in JSON format only."
+            ),
+        })
 
         system_msg = """You are an expert deepfake detection AI. Analyze video frames for signs of AI-generated or manipulated content.
 
@@ -51,20 +69,14 @@ RESPOND WITH VALID JSON ONLY:
 
 Be conservative — only flag as high risk if strong indicators are present. Many legitimate videos have minor artifacts from compression."""
 
-        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"deepfake-{uuid.uuid4()}", system_message=system_msg)
-        chat.with_model("anthropic", "claude-haiku-4-5")
-
-        user_msg = UserMessage(
-            text=(
-                f"Analyze these {len(image_contents)} frames from a social media video for "
-                f"deepfake/AI-generation indicators. Video URL: {video_url}\n\n"
-                "Provide your deepfake analysis in JSON format only."
-            ),
-            file_contents=image_contents,
+        response = await _client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=512,
+            system=system_msg,
+            messages=[{"role": "user", "content": content}],
         )
 
-        response = await chat.send_message(user_msg)
-        response_text = response.strip()
+        response_text = response.content[0].text.strip()
         if response_text.startswith("```"):
             lines = response_text.split("\n")
             start = 1

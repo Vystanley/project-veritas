@@ -1,4 +1,4 @@
-import { Link2, Loader2, AlertCircle, Sparkles } from "lucide-react";
+import { Link2, Loader2, AlertCircle } from "lucide-react";
 
 interface Props {
   url: string;
@@ -29,10 +29,11 @@ export function Hero({ url, setUrl, onSubmit, loading, progress, progressMsg, er
   return (
     <section className="px-4 pt-16 pb-12 sm:pt-24 sm:pb-20">
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center gap-2 text-xs tracking-[0.3em] text-textSecondary uppercase mb-6">
-          <Sparkles className="w-3.5 h-3.5 text-accent" />
-          Veritas
-        </div>
+        <img
+          src="/veritas-logo.png"
+          alt="Veritas"
+          className="h-8 sm:h-10 mb-6 object-contain"
+        />
         <h1 className="text-4xl sm:text-6xl font-semibold leading-tight tracking-tight">
           Is that video<br />
           <span className="text-accent">actually true?</span>

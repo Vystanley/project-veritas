@@ -20,7 +20,7 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
-      - key: EMERGENT_LLM_KEY
+      - key: ANTHROPIC_API_KEY
         sync: false
       - key: STRIPE_API_KEY
         sync: false

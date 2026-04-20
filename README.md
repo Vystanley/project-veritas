@@ -201,7 +201,7 @@ Create `backend/.env`:
 ```ini
 MONGO_URL="mongodb+srv://<user>:<password>@<cluster>.mongodb.net/?appName=veritas"
 DB_NAME=veritas
-EMERGENT_LLM_KEY=sk-emergent-...
+ANTHROPIC_API_KEY=sk-ant-your-key-here
 JWT_SECRET=pick-a-long-random-string
 TAVILY_API_KEY=tvly-dev-...
 ```

@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from config import ANTHROPIC_API_KEY
 from jobs import FactCheckJob
 from models import ClaimResult, DeepfakeResult, FactCheckResponse, ReverseImageResult
+from services.content_moderation import check_content_safety
 from services.deepfake import analyze_deepfake
 from services.visual_analysis import analyze_visual_and_deepfake
 from services.reverse_image_search import (
@@ -324,6 +325,15 @@ async def process_fact_check_background(job: FactCheckJob):
             except Exception as e:
                 logger.warning(f"Frame extraction failed: {e}")
                 frames = []
+
+            # --- Content moderation: reject NSFW / violent content early ---
+            if frames:
+                rejection = await check_content_safety(frames)
+                if rejection:
+                    job.status = "failed"
+                    job.error = rejection
+                    await job.save()
+                    return
 
             async def run_visual_and_deepfake():
                 """Combined visual description + deepfake in ONE LLM call."""

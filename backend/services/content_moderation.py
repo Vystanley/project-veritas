@@ -45,12 +45,16 @@ async def check_content_safety(frames: List[str]) -> Optional[str]:
         content.append({
             "type": "text",
             "text": (
-                "Does this video contain any of the following? "
-                "1) Full or partial nudity (genitals, bare breasts). Normal clothing like shorts, swimwear, or crop tops is NOT nudity. "
-                "2) Explicit sexual acts "
-                "3) Graphic real-world violence or gore (blood, open wounds, dead bodies). Cartoon violence or news footage is fine. "
-                "4) Animal cruelty (animals being tortured or killed) "
-                "5) Child sexual abuse material "
+                "Does this video contain ANY of the following extreme content? "
+                "1) Pornography (explicit sexual acts, full nudity with visible genitals). "
+                "   NOT porn: swimwear, shorts, crop tops, shirtless people, cleavage, dancing. "
+                "2) Child sexual abuse material. "
+                "3) Extreme graphic gore shown for shock value (close-up mutilation, torture). "
+                "   NOT gore: war/military footage, news coverage, protests, fights, injuries, blood. "
+                "IMPORTANT: This is a fact-checking app. Most videos are news, politics, and social media content. "
+                "Military footage, conflict zones, protests, confrontations, and disturbing news events are ALL SAFE. "
+                "Only flag actual pornography, CSAM, or extreme torture/mutilation content. "
+                "When in doubt, mark it safe. "
                 "Respond with ONLY valid JSON: "
                 '{"safe": true} or {"safe": false, "reason": "<brief reason>"}'
             ),
@@ -59,7 +63,7 @@ async def check_content_safety(frames: List[str]) -> Optional[str]:
         response = await _client.messages.create(
             model="claude-haiku-4-5",
             max_tokens=100,
-            system="You are a content safety classifier. Respond with JSON only. Only flag genuinely explicit or harmful content. Do NOT flag people wearing normal everyday clothing (shorts, swimwear, tank tops, etc).",
+            system="You are a content safety classifier for a fact-checking app. Respond with JSON only. Be very permissive. Only block actual pornography, CSAM, or extreme torture/gore content. News footage, military content, protests, fights, and people in any normal clothing are always safe.",
             messages=[{"role": "user", "content": content}],
         )
 

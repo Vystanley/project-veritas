@@ -27,7 +27,7 @@ class TestStripePaymentEndpoints:
         headers = {"Authorization": f"Bearer {token}"}
         payload = {
             "plan": "premium_monthly",
-            "origin_url": "https://video-truth-8.preview.emergentagent.com"
+            "origin_url": "https://project-veritas-mauve.vercel.app"
         }
 
         response = api_client.post(f"{base_url}/api/payments/checkout", json=payload, headers=headers)
@@ -37,7 +37,7 @@ class TestStripePaymentEndpoints:
         assert "url" in data, "Response should contain 'url' field (Stripe checkout URL)"
         assert "session_id" in data, "Response should contain 'session_id' field"
         assert data["url"].startswith("https://"), f"URL should be HTTPS, got {data['url']}"
-        assert "checkout.stripe.com" in data["url"] or "integrations.emergentagent.com" in data["url"], "URL should point to Stripe"
+        assert "checkout.stripe.com" in data["url"] or "checkout.stripe.com" in data["url"], "URL should point to Stripe"
         
         # Store session_id for next test
         pytest.stripe_session_id = data["session_id"]
@@ -58,7 +58,7 @@ class TestStripePaymentEndpoints:
         headers = {"Authorization": f"Bearer {token}"}
         payload = {
             "plan": "premium_annual",
-            "origin_url": "https://video-truth-8.preview.emergentagent.com"
+            "origin_url": "https://project-veritas-mauve.vercel.app"
         }
 
         response = api_client.post(f"{base_url}/api/payments/checkout", json=payload, headers=headers)
@@ -83,7 +83,7 @@ class TestStripePaymentEndpoints:
         headers = {"Authorization": f"Bearer {token}"}
         payload = {
             "plan": "premium_lifetime",  # Invalid plan
-            "origin_url": "https://video-truth-8.preview.emergentagent.com"
+            "origin_url": "https://project-veritas-mauve.vercel.app"
         }
 
         response = api_client.post(f"{base_url}/api/payments/checkout", json=payload, headers=headers)

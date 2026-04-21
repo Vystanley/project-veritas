@@ -6,9 +6,9 @@ This is not a benchmark. It's a sanity check that catches regressions and gives 
 
 ## What's in here
 
-- `dataset.json` — 15 items. Each is a short video URL paired with the claim it makes, the verdict a competent human fact-checker would give, and the source domains we'd expect a credible answer to cite.
-- `run_evals.py` — submits every item to the `/api/fact-check/demo` endpoint, polls until each job finishes, and scores the result.
-- `report.json` / `report.csv` — generated output. Overwritten on each run.
+- `dataset.json` - 15 items. Each is a short video URL paired with the claim it makes, the verdict a competent human fact-checker would give, and the source domains we'd expect a credible answer to cite.
+- `run_evals.py` - submits every item to the `/api/fact-check/demo` endpoint, polls until each job finishes, and scores the result.
+- `report.json` / `report.csv` - generated output. Overwritten on each run.
 
 ## How items are scored
 
@@ -36,7 +36,7 @@ Items are seeded as templates. Every `video_url` is `TODO` and some `expected_ve
 1. Find a short (<5 min) TikTok, Instagram, or X video that makes the listed claim.
 2. Replace the `TODO` in `video_url` with the real URL.
 3. For the `TODO` items that don't yet have a specific claim, pick one and fill in `claim`, `expected_verdict`, and `notes`.
-4. Prefer claims with a canonical fact-check already published (Snopes, PolitiFact, Reuters Fact Check, APFactCheck) — link that ruling in the `notes` field so anyone auditing the eval can verify your ground truth.
+4. Prefer claims with a canonical fact-check already published (Snopes, PolitiFact, Reuters Fact Check, APFactCheck) - link that ruling in the `notes` field so anyone auditing the eval can verify your ground truth.
 
 The dataset is deliberately small and hand-curated. Don't scale it up without also scaling up your curation effort.
 

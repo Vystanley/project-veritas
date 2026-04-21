@@ -26,7 +26,7 @@ Never rely on Veritas for decisions affecting your health, finances, legal statu
 
 ## Claims about real people
 
-Veritas may display verdicts that involve claims about named individuals, including public figures. These verdicts are automated assessments, not accusations. If you are the subject of a Veritas verdict and believe it is inaccurate or unfair, you may request a review or removal — see the correction process in the Terms of Use.
+Veritas may display verdicts that involve claims about named individuals, including public figures. These verdicts are automated assessments, not accusations. If you are the subject of a Veritas verdict and believe it is inaccurate or unfair, you may request a review or removal (see the correction process in the Terms of Use).
 
 ## Source links
 

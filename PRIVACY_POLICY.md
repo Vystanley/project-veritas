@@ -45,7 +45,7 @@ For GDPR purposes, we act as the **data controller** for personal data we collec
 - We do not serve advertisements or share data with advertising networks
 - We do not use third-party analytics that build identity profiles across websites
 
-## 3. Why we collect it — legal basis (GDPR Art. 6)
+## 3. Why we collect it - legal basis (GDPR Art. 6)
 
 | Purpose | Legal basis |
 |---|---|
@@ -53,7 +53,7 @@ For GDPR purposes, we act as the **data controller** for personal data we collec
 | Account registration, login, email verification | Performance of a contract |
 | Rate limiting and abuse prevention | Legitimate interests (Art. 6(1)(f)) |
 | Complying with legal obligations (e.g., lawful requests) | Legal obligation (Art. 6(1)(c)) |
-| Marketing or newsletters (only if we add them) | Consent (Art. 6(1)(a)) — we will ask you separately |
+| Marketing or newsletters (only if we add them) | Consent (Art. 6(1)(a)), we will ask you separately |
 
 ## 4. How long we keep it
 
@@ -71,14 +71,14 @@ Once retention expires, data is deleted or fully anonymized.
 
 We use a small number of trusted third-party processors to operate the Service. Each one processes only the data necessary to perform its function.
 
-- **MongoDB Atlas** — database hosting
-- **Render** — application hosting (if deployed)
-- **Anthropic** (via the Emergent proxy) — AI analysis of transcripts and frames
-- **Tavily, DuckDuckGo, Wikipedia, Brave Search** — web search for evidence
-- **SerpApi** (optional) — reverse image search
-- **imgbb** (optional) — short-lived image hosting for reverse image search
-- **Stripe** (via the Emergent proxy, if subscriptions are enabled) — payment processing
-- **Resend or similar** (if email verification is enabled) — transactional email
+- **MongoDB Atlas** - database hosting
+- **Render** - application hosting
+- **Anthropic** - AI analysis of transcripts and frames
+- **Tavily, DuckDuckGo, Wikipedia, Brave Search** - web search for evidence
+- **SerpApi** (optional) - reverse image search
+- **imgbb** (optional) - short-lived image hosting for reverse image search
+- **Stripe** (if subscriptions are enabled) - payment processing
+- **Resend or similar** (if email verification is enabled) - transactional email
 
 We do not share personal data with any of these providers beyond what is strictly necessary to operate the Service. We do not sell personal data and we do not share it with advertisers.
 
@@ -95,10 +95,10 @@ Some of the providers listed above are located in the United States or other cou
 You have the right to:
 
 - **Access** the personal data we hold about you
-- **Rectification** — correct inaccurate data
-- **Erasure** ("right to be forgotten") — delete your data
+- **Rectification** - correct inaccurate data
+- **Erasure** ("right to be forgotten") - delete your data
 - **Restriction** of processing in certain cases
-- **Portability** — receive your data in a machine-readable format
+- **Portability** - receive your data in a machine-readable format
 - **Object** to processing based on legitimate interests
 - **Withdraw consent** at any time, where processing is based on consent
 - **Lodge a complaint** with your local data protection authority

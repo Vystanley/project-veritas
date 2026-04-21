@@ -46,10 +46,11 @@ async def check_content_safety(frames: List[str]) -> Optional[str]:
             "type": "text",
             "text": (
                 "Does this video contain any of the following? "
-                "1) Nudity or sexual content "
-                "2) Graphic violence or gore "
-                "3) Animal cruelty "
-                "4) Child exploitation or endangerment "
+                "1) Full or partial nudity (genitals, bare breasts). Normal clothing like shorts, swimwear, or crop tops is NOT nudity. "
+                "2) Explicit sexual acts "
+                "3) Graphic real-world violence or gore (blood, open wounds, dead bodies). Cartoon violence or news footage is fine. "
+                "4) Animal cruelty (animals being tortured or killed) "
+                "5) Child sexual abuse material "
                 "Respond with ONLY valid JSON: "
                 '{"safe": true} or {"safe": false, "reason": "<brief reason>"}'
             ),
@@ -58,7 +59,7 @@ async def check_content_safety(frames: List[str]) -> Optional[str]:
         response = await _client.messages.create(
             model="claude-haiku-4-5",
             max_tokens=100,
-            system="You are a content safety classifier. Respond with JSON only. Be conservative — flag anything questionable.",
+            system="You are a content safety classifier. Respond with JSON only. Only flag genuinely explicit or harmful content. Do NOT flag people wearing normal everyday clothing (shorts, swimwear, tank tops, etc).",
             messages=[{"role": "user", "content": content}],
         )
 
